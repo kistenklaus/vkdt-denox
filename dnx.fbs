@@ -1,0 +1,178 @@
+namespace denox.dnx;
+
+file_extension "dnx";
+
+enum ScalarType:ubyte { 
+  I16=0, 
+  U16=1, 
+  I32=2, 
+  U32=3, 
+  I64=4, 
+  U64=5, 
+  F16=6, 
+  F32=7, 
+  F64=8
+}
+
+table SymRef {
+  sid:uint;   // Index into sym_ir.ops
+}
+
+table ScalarLiteral {
+  dtype:ScalarType;
+  bytes:[ubyte];
+}
+
+union ScalarSource { 
+  literal:ScalarLiteral, 
+  symbolic:SymRef 
+}
+
+table PushConstantField {
+  dtype:ScalarType;         
+  offset:ushort;            
+  source:ScalarSource;      
+}
+
+table PushConstant {
+  size:ushort;
+  fields:[PushConstantField];
+}
+
+enum Access:ubyte { 
+  ReadOnly=0,
+  WriteOnly=1, 
+  ReadWrite=2 
+}
+
+table DescriptorBinding {
+  binding:ushort;
+  access:Access;
+  tensor:uint;
+}
+
+table DescriptorSetBinding {
+  set:ushort;
+  bindings:[DescriptorBinding];
+}
+
+table ComputeDispatch {
+  binary_id:uint32;
+  workgroup_count_x:ScalarSource;
+  workgroup_count_y:ScalarSource;
+  workgroup_count_z:ScalarSource;
+  entry_point:string;
+  bindings:[DescriptorSetBinding];
+  push_constant: PushConstant; 
+}
+
+union Dispatch {
+  ComputeDispatch,
+}
+
+table DispatchInfo {
+  name:string;
+  debug_info:string;
+  input_desc:string;
+  output_desc:string;
+  memory_reads:ScalarSource;
+  memory_writes:ScalarSource;
+}
+
+table Buffer {
+  size:ScalarSource;
+  alignment:ushort;
+}
+
+enum TensorLayout:ubyte {
+  HWC,
+  CHW,
+  CHWC8,
+}
+
+table TensorInfo {
+  tensor:uint32;
+  width:ScalarSource; 
+  height:ScalarSource; 
+  channels:ScalarSource;
+  layout:TensorLayout;
+  type:ScalarType;
+  name:string;
+}
+
+table Tensor {
+  buffer:uint;
+  offset:ScalarSource;
+  size:ScalarSource;
+}
+
+enum SymIROpCode:uint16 {
+  NOP = 0,
+  ADD = 1,
+  SUB = 2,
+  MUL = 3,
+  DIV = 4,
+  MOD = 5,
+  MIN = 6,
+  MAX = 7,
+  LHSC = 0x8000, // lhs is constant
+  RHSC = 0x4000, // rhs is constant
+}
+
+struct SymIROp  {
+  opcode:SymIROpCode;
+  lhs:int64;
+  rhs:int64;
+}
+
+table SymIR {
+  var_count:uint16;
+  ops:[SymIROp];
+}
+
+table TensorInitializer {
+  tensor:uint (key);
+  data:[ubyte];
+}
+
+enum Version:ushort {
+  DNX_VERSION_1_0,
+}
+
+table ModelInfo {
+  producer:string;
+  producer_version:string;
+  model_version:string;
+}
+
+enum RuntimeFeature:uint {
+  CooperativeMatrix,
+}
+
+table ValueName {
+  name: string;
+  value: ScalarSource;
+}
+
+table ShaderBinary {
+  spirv:[uint32];
+}
+
+table Model {
+  version: Version;
+  info:ModelInfo; 
+  required_features:[RuntimeFeature];
+  tensors:[Tensor];
+  buffers:[Buffer];
+  dispatches:[Dispatch];
+  dispatch_infos:[DispatchInfo];
+  shader_binaries:[ShaderBinary];
+  sym_ir:SymIR;
+  initializers:[TensorInitializer];
+  inputs:[TensorInfo];
+  outputs:[TensorInfo];
+  value_names:[ValueName];
+}
+
+
+root_type Model;
