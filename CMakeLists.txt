@@ -20,9 +20,11 @@ add_executable(vkdt-denox
   ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/io.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/symbolics.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/tensor_extent.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/create_nodes.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/compute_graph.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/compress_weights.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/shader_registry.cpp
+
 )
 
 if (VKDT_DENOX_SAN)

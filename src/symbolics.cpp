@@ -2,6 +2,8 @@
 #include "source_writer.hpp"
 #include <dnx.h>
 #include <filesystem>
+#include <fmt/format.h>
+#include <iterator>
 #include <stdexcept>
 
 static void register_symbol_as_referenced(vkdt_denox::SymbolicIR &ir,
@@ -139,173 +141,228 @@ vkdt_denox::read_symbolic_ir(const denox::dnx::Model *dnx) {
   return ir;
 }
 
-void vkdt_denox::def_struct_symbolic_table(vkdt_denox::SourceWriter &src,
-                                           SymbolicIR &ir) {
-  src.add_include("stdint.h", IncludeType::System);
+// void vkdt_denox::def_struct_symbolic_table(vkdt_denox::SourceWriter &src,
+//                                            SymbolicIR &ir) {
+//   src.add_include("stdint.h", IncludeType::System);
+//
+//   src.append("struct SymbolTable {");
+//   src.push_indentation();
+//
+//   for (uint32_t i = 0; i < ir.symbol_is_referrenced.size(); ++i) {
+//     if (ir.symbol_is_referrenced[i]) {
+//       src.append(fmt::format("int64_t r{};", i));
+//     }
+//   }
+//   src.pop_indentation();
+//   src.append("};");
+// }
+//
+// std::string vkdt_denox::access_symbol(const SymbolicIR &ir,
+//                                       std::string_view table_ptr_var,
+//                                       Symbol symbol, bool deref) {
+//   if (symbol.type == denox::dnx::ScalarSource_symbolic) {
+//     uint32_t sid = static_cast<const denox::dnx::SymRef *>(symbol.ptr)->sid();
+//     if (!ir.symbol_is_referrenced[sid]) {
+//       throw std::runtime_error(fmt::format("Trying to access unreferred symbol [sid={}]", sid));
+//     }
+//     if (deref) {
+//       return fmt::format("{}->r{}", table_ptr_var, sid);
+//     } else {
+//       return fmt::format("{}.r{}", table_ptr_var, sid);
+//     }
+//   } else {
+//     const auto *literal =
+//         static_cast<const denox::dnx::ScalarLiteral *>(symbol.ptr);
+//     int64_t v;
+//     switch (literal->dtype()) {
+//     case denox::dnx::ScalarType_I16: {
+//       int16_t tmp;
+//       std::memcpy(&tmp, literal->bytes()->data(), sizeof(int16_t));
+//       v = static_cast<int64_t>(tmp);
+//       break;
+//     }
+//     case denox::dnx::ScalarType_U16: {
+//       uint16_t tmp;
+//       std::memcpy(&tmp, literal->bytes()->data(), sizeof(uint16_t));
+//       v = static_cast<int64_t>(tmp);
+//       break;
+//     }
+//     case denox::dnx::ScalarType_I32: {
+//       int32_t tmp;
+//       std::memcpy(&tmp, literal->bytes()->data(), sizeof(int32_t));
+//       v = static_cast<int64_t>(tmp);
+//       break;
+//     }
+//     case denox::dnx::ScalarType_U32: {
+//       uint32_t tmp;
+//       std::memcpy(&tmp, literal->bytes()->data(), sizeof(uint32_t));
+//       v = static_cast<int64_t>(tmp);
+//       break;
+//     }
+//     case denox::dnx::ScalarType_I64: {
+//       std::memcpy(&v, literal->bytes()->data(), sizeof(int64_t));
+//       break;
+//     }
+//     case denox::dnx::ScalarType_U64: {
+//       uint64_t tmp;
+//       std::memcpy(&tmp, literal->bytes()->data(), sizeof(uint64_t));
+//       v = static_cast<int64_t>(tmp);
+//       break;
+//     }
+//     case denox::dnx::ScalarType_F16:
+//     case denox::dnx::ScalarType_F32:
+//     case denox::dnx::ScalarType_F64:
+//       throw std::runtime_error("Floating point types, are not allowed in "
+//                                "scalar sources. Invalid dnx file format!");
+//       break;
+//     }
+//     return fmt::format("{}", v);
+//   }
+// }
+//
+// void vkdt_denox::def_func_eval_symbolic_expressions(
+//     vkdt_denox::SourceWriter &src, SymbolicIR &ir) {
+//
+//   src.add_include("stdint.h", IncludeType::System);
+//   src.append(
+//       "static void eval_symbolic_expressions(struct SymbolTable* table, struct TensorExtent* "
+//       "inputExtents) {");
+//   src.push_indentation();
+//   for (uint32_t sid = 0; sid < ir.sym_sources.size(); ++sid) {
+//     const auto &source = ir.sym_sources[sid];
+//     std::string varsource;
+//     if (source.dim == SymbolicVarSourceDim::Width) {
+//       varsource = fmt::format("inputExtents[{}].width", source.input_index);
+//     } else if (source.dim == SymbolicVarSourceDim::Height) {
+//       varsource = fmt::format("inputExtents[{}].height", source.input_index);
+//     } else {
+//       throw std::runtime_error("unreachable");
+//     }
+//     if (ir.symbol_is_referrenced[sid]) {
+//       src.append(fmt::format("table->r{} = {};", sid, varsource));
+//     } else {
+//       src.append(fmt::format("uint64_t r{} = {}", sid, varsource));
+//     }
+//   }
+//
+//   const uint32_t opcount = ir.symir->ops()->size();
+//   const uint32_t varcount = ir.symir->var_count();
+//   for (uint32_t i = 0; i < opcount; ++i) {
+//     uint32_t sid = i + varcount;
+//     std::string expr;
+//     const auto *op = ir.symir->ops()->Get(i);
+//     denox::dnx::SymIROpCode opcode = op->opcode();
+//
+//     const bool lhsc = opcode & denox::dnx::SymIROpCode_LHSC;
+//     std::string lhs;
+//     if (lhsc) {
+//       lhs = fmt::format("{}", op->lhs());
+//     } else {
+//       uint32_t lhs_sid = static_cast<uint32_t>(op->lhs());
+//       if (ir.symbol_is_referrenced[lhs_sid]) {
+//         lhs = fmt::format("table->r{}", lhs_sid);
+//       } else {
+//         lhs = fmt::format("r{}", lhs_sid);
+//       }
+//     }
+//
+//     const bool rhsc = opcode & denox::dnx::SymIROpCode_RHSC;
+//     std::string rhs;
+//     if (rhsc) {
+//       rhs = fmt::format("{}", op->rhs());
+//     } else {
+//       uint32_t rhs_sid = static_cast<uint32_t>(op->rhs());
+//       if (ir.symbol_is_referrenced[rhs_sid]) {
+//         rhs = fmt::format("table->r{}", rhs_sid);
+//       } else {
+//         rhs = fmt::format("r{}", rhs_sid);
+//       }
+//     }
+//
+//     std::string res;
+//     if (ir.symbol_is_referrenced[sid]) {
+//       res = fmt::format("table->r{}", sid);
+//     } else {
+//       res = fmt::format("int64_t r{}", sid);
+//     }
+//
+//     // SymIROpCode_ADD = 1,
+//     // SymIROpCode_SUB = 2,
+//     // SymIROpCode_MUL = 3,
+//     // SymIROpCode_DIV = 4,
+//     // SymIROpCode_MOD = 5,
+//     // SymIROpCode_MIN = 6,
+//     // SymIROpCode_MAX = 7,
+//     if (opcode & denox::dnx::SymIROpCode_ADD) {
+//       src.append(fmt::format("{} = {} + {};", res, lhs, rhs));
+//     } else if (opcode & denox::dnx::SymIROpCode_SUB) {
+//       src.append(fmt::format("{} = {} - {};", res, lhs, rhs));
+//     } else if (opcode & denox::dnx::SymIROpCode_MUL) {
+//       src.append(fmt::format("{} = {} * {};", res, lhs, rhs));
+//     } else if (opcode & denox::dnx::SymIROpCode_DIV) {
+//       src.append(fmt::format("{} = {} / {};", res, lhs, rhs));
+//     } else if (opcode & denox::dnx::SymIROpCode_MOD) {
+//       src.append(fmt::format("{} = {} % {};", res, lhs, rhs));
+//     } else if (opcode & denox::dnx::SymIROpCode_MIN) {
+//       src.append(
+//           fmt::format("{} = {} < {} ? {} : {};", res, lhs, rhs, lhs, rhs));
+//     } else if (opcode & denox::dnx::SymIROpCode_MAX) {
+//       src.append(
+//           fmt::format("{} = {} < {} ? {} : {};", res, lhs, rhs, rhs, lhs));
+//     }
+//   }
+//
+//   src.pop_indentation();
+//
+//   src.append("}");
+// }
 
-  src.append("struct SymbolTable {");
-  src.push_indentation();
-
-  for (uint32_t i = 0; i < ir.symbol_is_referrenced.size(); ++i) {
-    if (ir.symbol_is_referrenced[i]) {
-      src.append(fmt::format("int64_t r{};", i));
-    }
+uint64_t vkdt_denox::read_unsigned_scalar_literal(
+    const denox::dnx::ScalarLiteral *literal) {
+  uint64_t v;
+  switch (literal->dtype()) {
+  case denox::dnx::ScalarType_I16: {
+    int16_t tmp;
+    std::memcpy(&tmp, literal->bytes()->data(), sizeof(int16_t));
+    v = static_cast<uint64_t>(tmp);
+    break;
   }
-  src.pop_indentation();
-  src.append("};");
-}
-
-std::string vkdt_denox::access_symbol(SymbolicIR &ir,
-                                      std::string_view table_ptr_var,
-                                      Symbol symbol) {
-  if (symbol.type == denox::dnx::ScalarSource_symbolic) {
-    uint32_t sid = static_cast<const denox::dnx::SymRef *>(symbol.ptr)->sid();
-    if (ir.symbol_is_referrenced[sid]) {
-      throw std::runtime_error("Trying to access unreferred symbol!");
-    }
-    return fmt::format("{}->r{}", table_ptr_var, sid);
-  } else {
-    const auto *literal =
-        static_cast<const denox::dnx::ScalarLiteral *>(symbol.ptr);
-    int64_t v;
-    switch (literal->dtype()) {
-    case denox::dnx::ScalarType_I16: {
-      int16_t tmp;
-      std::memcpy(&tmp, literal->bytes()->data(), sizeof(int16_t));
-      v = static_cast<int64_t>(tmp);
-      break;
-    }
-    case denox::dnx::ScalarType_U16: {
-      uint16_t tmp;
-      std::memcpy(&tmp, literal->bytes()->data(), sizeof(uint16_t));
-      v = static_cast<int64_t>(tmp);
-      break;
-    }
-    case denox::dnx::ScalarType_I32: {
-      int32_t tmp;
-      std::memcpy(&tmp, literal->bytes()->data(), sizeof(int32_t));
-      v = static_cast<int64_t>(tmp);
-      break;
-    }
-    case denox::dnx::ScalarType_U32: {
-      uint32_t tmp;
-      std::memcpy(&tmp, literal->bytes()->data(), sizeof(uint32_t));
-      v = static_cast<int64_t>(tmp);
-      break;
-    }
-    case denox::dnx::ScalarType_I64: {
-      std::memcpy(&v, literal->bytes()->data(), sizeof(int64_t));
-      break;
-    }
-    case denox::dnx::ScalarType_U64: {
-      uint64_t tmp;
-      std::memcpy(&tmp, literal->bytes()->data(), sizeof(uint64_t));
-      v = static_cast<int64_t>(tmp);
-    }
-    case denox::dnx::ScalarType_F16:
-    case denox::dnx::ScalarType_F32:
-    case denox::dnx::ScalarType_F64:
-      throw std::runtime_error("Floating point types, are not allowed in "
-                               "scalar sources. Invalid dnx file format!");
-      break;
-    }
-    return fmt::format("{}", v);
+  case denox::dnx::ScalarType_U16: {
+    uint16_t tmp;
+    std::memcpy(&tmp, literal->bytes()->data(), sizeof(uint16_t));
+    v = static_cast<uint64_t>(tmp);
+    break;
   }
-}
-
-void vkdt_denox::def_func_symbolic_expressions(vkdt_denox::SourceWriter &src,
-                                               SymbolicIR &ir) {
-
-  src.add_include("stdint.h", IncludeType::System);
-  src.append(
-      "static void eval_symbolic_expressions(SymbolTable* table, TensorExtent* "
-      "inputExtents) {");
-  src.push_indentation();
-  for (uint32_t sid = 0; sid < ir.sym_sources.size(); ++sid) {
-    const auto &source = ir.sym_sources[sid];
-    std::string varsource;
-    if (source.dim == SymbolicVarSourceDim::Width) {
-      varsource = fmt::format("inputExtents[{}]->width", source.input_index);
-    } else if (source.dim == SymbolicVarSourceDim::Height) {
-      varsource = fmt::format("inputExtents[{}]->height", source.input_index);
-    } else {
-      throw std::runtime_error("unreachable");
-    }
-    if (ir.symbol_is_referrenced[sid]) {
-      src.append(fmt::format("table->r{} = {};", sid, varsource));
-    } else {
-      src.append(fmt::format("uint64_t r{} = {}", sid, varsource));
-    }
+  case denox::dnx::ScalarType_I32: {
+    int32_t tmp;
+    std::memcpy(&tmp, literal->bytes()->data(), sizeof(int32_t));
+    v = static_cast<uint64_t>(tmp);
+    break;
   }
-
-  const uint32_t opcount = ir.symir->ops()->size();
-  const uint32_t varcount = ir.symir->var_count();
-  for (uint32_t i = 0; i < opcount; ++i) {
-    uint32_t sid = i + varcount;
-    std::string expr;
-    const auto *op = ir.symir->ops()->Get(i);
-    denox::dnx::SymIROpCode opcode = op->opcode();
-
-    const bool lhsc = opcode & denox::dnx::SymIROpCode_LHSC;
-    std::string lhs;
-    if (lhsc) {
-      lhs = fmt::format("{}", op->lhs());
-    } else {
-      uint32_t lhs_sid = static_cast<uint32_t>(op->lhs());
-      if (ir.symbol_is_referrenced[lhs_sid]) {
-        lhs = fmt::format("table->r{}", lhs_sid);
-      } else {
-        lhs = fmt::format("r{}", lhs_sid);
-      }
-    }
-
-    const bool rhsc = opcode & denox::dnx::SymIROpCode_RHSC;
-    std::string rhs;
-    if (rhsc) {
-      rhs = fmt::format("{}", op->rhs());
-    } else {
-      uint32_t rhs_sid = static_cast<uint32_t>(op->rhs());
-      if (ir.symbol_is_referrenced[rhs_sid]) {
-        rhs = fmt::format("table->r{}", rhs_sid);
-      } else {
-        rhs = fmt::format("r{}", rhs_sid);
-      }
-    }
-
-    std::string res;
-    if (ir.symbol_is_referrenced[sid]) {
-      res = fmt::format("table->r{}", sid);
-    } else {
-      res = fmt::format("int64_t r{}", sid);
-    }
-
-    // SymIROpCode_ADD = 1,
-    // SymIROpCode_SUB = 2,
-    // SymIROpCode_MUL = 3,
-    // SymIROpCode_DIV = 4,
-    // SymIROpCode_MOD = 5,
-    // SymIROpCode_MIN = 6,
-    // SymIROpCode_MAX = 7,
-    if (opcode & denox::dnx::SymIROpCode_ADD) {
-      src.append(fmt::format("{} = {} + {}", res, lhs, rhs));
-    } else if (opcode & denox::dnx::SymIROpCode_SUB) {
-      src.append(fmt::format("{} = {} - {}", res, lhs, rhs));
-    } else if (opcode & denox::dnx::SymIROpCode_MUL) {
-      src.append(fmt::format("{} = {} * {}", res, lhs, rhs));
-    } else if (opcode & denox::dnx::SymIROpCode_DIV) {
-      src.append(fmt::format("{} = {} / {}", res, lhs, rhs));
-    } else if (opcode & denox::dnx::SymIROpCode_MOD) {
-      src.append(fmt::format("{} = {} % {}", res, lhs, rhs));
-    } else if (opcode & denox::dnx::SymIROpCode_MIN) {
-      src.append(
-          fmt::format("{} = {} < {} ? {} : {}", res, lhs, rhs, lhs, rhs));
-    } else if (opcode & denox::dnx::SymIROpCode_MAX) {
-      src.append(
-          fmt::format("{} = {} < {} ? {} : {}", res, lhs, rhs, rhs, lhs));
-    }
+  case denox::dnx::ScalarType_U32: {
+    uint32_t tmp;
+    std::memcpy(&tmp, literal->bytes()->data(), sizeof(uint32_t));
+    v = static_cast<uint64_t>(tmp);
+    break;
   }
-
-  src.pop_indentation();
-
-  src.append("}");
+  case denox::dnx::ScalarType_I64: {
+    int64_t tmp;
+    std::memcpy(&tmp, literal->bytes()->data(), sizeof(int64_t));
+    v = static_cast<uint64_t>(tmp);
+    break;
+  }
+  case denox::dnx::ScalarType_U64: {
+    uint64_t tmp;
+    std::memcpy(&tmp, literal->bytes()->data(), sizeof(uint64_t));
+    v = tmp;
+    break;
+  }
+  case denox::dnx::ScalarType_F16:
+  case denox::dnx::ScalarType_F32:
+  case denox::dnx::ScalarType_F64:
+    throw std::runtime_error("Floating point types, are not allowed in "
+                             "scalar sources. Invalid dnx file format!");
+    break;
+  }
+  return v;
 }

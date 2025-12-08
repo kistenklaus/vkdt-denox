@@ -45,3 +45,5 @@
 /.cache
 **.c
 **.dnx
+
+/output

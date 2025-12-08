@@ -78,9 +78,6 @@ public:
     }
 
     std::string src = fmt::format("{}{}{}", preamble, m_code, epilog);
-    while (!src.empty() && src.back() == '\n') {
-      src.pop_back();
-    }
     return src;
   }
 

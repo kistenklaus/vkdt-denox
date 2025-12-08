@@ -1,69 +1,102 @@
 #pragma once
 
+#include "compress_weights.hpp"
 #include "symbolics.hpp"
 #include <cstdint>
 #include <dnx.h>
 #include <string>
+#include <variant>
 #include <vector>
 namespace vkdt_denox {
 
+static constexpr uint32_t none_sentinal = std::numeric_limits<uint32_t>::max();
+static constexpr uint32_t input_sential =
+    std::numeric_limits<uint32_t>::max() - 1;
+
 enum class SinkSourceType {
-  SinkRead,    // <- reads resource
-  SourceWrite, // <- writes to resource, this implicitly creates a
-               //    resource.
-  SourceConst, // <- creates resource
+  Read,
+  Write,
+  Source,
 };
 
-enum class Storage {
+enum class SinkSourceChan {
   SSBO,
 };
 
-enum class Dtype {
-  U32,
-  I32,
+enum class SinkSourceFormat {
   F16,
-  Any,
+  Byte,
 };
 
 struct SinkSource {
+  std::string name;
   SinkSourceType type;
-  std::optional<std::span<const uint8_t>> constSourceData;
-  Storage storage;
-  Dtype dtype;
+  SinkSourceChan chan;
+  SinkSourceFormat format;
+  uint32_t buffer_roi_id;
 };
 
-struct PushConstant {
-  uint32_t offset;
+enum PushConstantType {
+  U32,
+  I32,
+  U16,
+  I16,
+  U64,
+  I64,
+};
+
+struct PushConstantField {
+  uint16_t offset;
+  PushConstantType type;
   Symbol value;
-  Dtype type;
+};
+
+struct PushConstants {
+  uint16_t size;
+  std::vector<PushConstantField> fields;
 };
 
 struct ComputeDispatch {
-  uint32_t spv_binary_id;
+  uint32_t binary_id;
   Symbol workgroup_count_x;
   Symbol workgroup_count_y;
   Symbol workgroup_count_z;
-  std::vector<PushConstant> push_constants;
+  PushConstants pc;
+};
+
+struct Upload {
+  std::string name;
+  uint32_t sinksource_id;
 };
 
 struct Node {
-  std::optional<ComputeDispatch> dispatch;
+  std::variant<ComputeDispatch, Upload> op;
   std::vector<SinkSource> sinksources;
+  std::optional<uint32_t> dummy_source;
 };
 
 struct Connector {
-  int src_node_id;
-  std::string src_source_name;
-  int dst_node_id;
-  std::string dst_sink_name;
+  uint32_t src_node;
+  uint32_t src_node_sinksource;
+  uint32_t dst_node;
+  uint32_t dst_node_sinksource;
+};
+
+struct BufferRoi {
+  std::variant<Symbol, size_t> byte_size;
+  std::optional<std::pair<Symbol, Symbol>> extent;
 };
 
 struct ComputeGraph {
   // Simple adj list
   std::vector<Node> nodes;
   std::vector<Connector> connectors;
+  std::vector<BufferRoi> buffer_rois;
+  std::optional<uint32_t> dummy_roi;
 };
 
-ComputeGraph reconstruct_compute_graph(const denox::dnx::Model *dnx);
+ComputeGraph
+reconstruct_compute_graph(const denox::dnx::Model *dnx,
+                          const CompressedWeights &compressed_weights);
 
 } // namespace vkdt_denox

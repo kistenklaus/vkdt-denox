@@ -2,9 +2,9 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <stdexcept>
 #include <unistd.h>
 #include <vector>
-
 
 static void atomic_write_raw(const std::string &path, const char *data,
                              std::size_t size) {
@@ -38,7 +38,7 @@ static void atomic_write_raw(const std::string &path, const char *data,
   }
 }
 
-void vkdt_denox::write_file_bytes(const std::string &path, void *buf,
+void vkdt_denox::write_file_bytes(const std::string &path, const void *buf,
                                   std::size_t size) {
   atomic_write_raw(path, static_cast<const char *>(buf), size);
 }
@@ -87,4 +87,17 @@ std::string vkdt_denox::read_file(const std::string &path) {
       throw std::runtime_error("read_file: read failed " + path);
   }
   return s;
+}
+
+void vkdt_denox::mkdir(const std::filesystem::path &path) {
+  if (std::filesystem::exists(path)) {
+    if (!std::filesystem::is_directory(path)) {
+      throw std::runtime_error("Failed to create output directory. Path "
+                               "exists, but is not a directory");
+    }
+  } else {
+    if (!std::filesystem::create_directory(path)) {
+      throw std::runtime_error("Failed to create output directory");
+    }
+  }
 }
