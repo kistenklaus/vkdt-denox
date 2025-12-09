@@ -40,6 +40,22 @@ sinksource_format_to_string(vkdt_denox::SinkSourceFormat format) {
     return "f16";
   case vkdt_denox::SinkSourceFormat::Byte:
     return "u8";
+  case vkdt_denox::SinkSourceFormat::Auto:
+    return "*";
+    break;
+  }
+  throw std::runtime_error("unreachable");
+}
+
+static size_t sinksource_format_size(vkdt_denox::SinkSourceFormat format) {
+  switch (format) {
+  case vkdt_denox::SinkSourceFormat::F16:
+    return 2;
+  case vkdt_denox::SinkSourceFormat::Byte:
+    return 1;
+  case vkdt_denox::SinkSourceFormat::Auto:
+    throw std::runtime_error("trying to get sizeof auto type.");
+    break;
   }
   throw std::runtime_error("unreachable");
 }
@@ -129,13 +145,28 @@ void vkdt_denox::def_func_create_nodes(
       // write extent semantics.
     } else if (std::holds_alternative<size_t>(buffer_roi.byte_size)) {
       size_t byte_size = std::get<size_t>(buffer_roi.byte_size);
-      src_compute_graph.append(
-          fmt::format("dt_roi_t roi{} = {{.wd = {}, .ht = 1}};", i, byte_size));
+      assert(buffer_roi.format != SinkSourceFormat::Auto);
+      if (buffer_roi.format != SinkSourceFormat::Byte) {
+        assert(byte_size % sinksource_format_size(buffer_roi.format) == 0);
+        byte_size /= sinksource_format_size(buffer_roi.format);
+        src_compute_graph.append(fmt::format(
+            "dt_roi_t roi{} = {{.wd = {}, .ht = 1}};", i, byte_size));
+      } else {
+        src_compute_graph.append(fmt::format(
+            "dt_roi_t roi{} = {{.wd = {}, .ht = 1}};", i, byte_size));
+      }
     } else if (std::holds_alternative<Symbol>(buffer_roi.byte_size)) {
       auto symbol = std::get<Symbol>(buffer_roi.byte_size);
-      src_compute_graph.append(
-          fmt::format("dt_roi_t roi{} = {{.wd = {}, .ht = 1}};", i,
-                      access_symbol(symbol, referenced_symbols)));
+      if (buffer_roi.format != SinkSourceFormat::Byte) {
+        src_compute_graph.append(
+            fmt::format("dt_roi_t roi{} = {{.wd = {} / {}, .ht = 1}};", i,
+                        access_symbol(symbol, referenced_symbols),
+                        sinksource_format_size(buffer_roi.format)));
+      } else {
+        src_compute_graph.append(
+            fmt::format("dt_roi_t roi{} = {{.wd = {}, .ht = 1}};", i,
+                        access_symbol(symbol, referenced_symbols)));
+      }
     }
   }
 
@@ -170,8 +201,8 @@ void vkdt_denox::def_func_create_nodes(
           }
 
           src_compute_graph.append(fmt::format(
-              "memcpy({}_pc + {}, &pc{}, sizeof({}));", node_namespace, pc.offset, p,
-              push_constant_type_to_string(pc.type)));
+              "memcpy({}_pc + {}, &pc{}, sizeof({}));", node_namespace,
+              pc.offset, p, push_constant_type_to_string(pc.type)));
         }
         src_compute_graph.pop_indentation();
         src_compute_graph.append("}");
@@ -249,9 +280,19 @@ void vkdt_denox::def_func_create_nodes(
 
   for (uint32_t i = 0; i < compute_graph.connectors.size(); ++i) {
     const auto &connector = compute_graph.connectors[i];
-
-    if (connector.src_node == input_sential) {
-      src_compute_graph.append("//TODO: input connector");
+    if (connector.src_node == external_sential) {
+      assert(connector.dst_node != external_sential);
+      const uint32_t input_index = connector.src_node_sinksource;
+      src_compute_graph.append(fmt::format(
+          "dt_connector_copy(graph, module, {}, n{}_id, {});", input_index,
+          connector.dst_node, connector.dst_node_sinksource));
+    } else if (connector.dst_node == external_sential) {
+      const uint32_t output_index = connector.dst_node_sinksource;
+      assert(connector.src_node != external_sential);
+      src_compute_graph.append(
+          fmt::format("dt_connector_copy(graph, module, {}, n{}_id, {});",
+                      dnx->inputs()->size() + output_index, connector.src_node,
+                      connector.src_node_sinksource));
     } else {
       assert(connector.src_node != none_sentinal);
       assert(connector.dst_node != none_sentinal);
@@ -271,8 +312,6 @@ void vkdt_denox::def_func_create_nodes(
     }
   }
 
-  src_compute_graph.append("// TODO: output connectors");
-
   // Finally generate symbolic eval code.
 
   SourceWriter src_sym;
@@ -287,12 +326,14 @@ void vkdt_denox::def_func_create_nodes(
     switch (symsrc.dim) {
     case SymbolicVarSourceDim::Height: {
       symbolic_expressions.push_back(
-          fmt::format("int64_t s{} = module->connector[{}].roi.wd;", sid, symsrc.input_index));
+          fmt::format("int64_t s{} = module->connector[{}].roi.wd;", sid,
+                      symsrc.input_index));
       break;
     }
     case SymbolicVarSourceDim::Width: {
       symbolic_expressions.push_back(
-          fmt::format("int64_t s{} = module->connector[{}].roi.ht;", sid, symsrc.input_index));
+          fmt::format("int64_t s{} = module->connector[{}].roi.ht;", sid,
+                      symsrc.input_index));
       break;
     }
     }
@@ -358,7 +399,7 @@ void vkdt_denox::def_func_create_nodes(
       }
       pruned_expressions[i] = true;
       pruned_once = true;
-      const auto* op = symbolic_ir.symir->ops()->Get(i - symvar_count);
+      const auto *op = symbolic_ir.symir->ops()->Get(i - symvar_count);
       if (!(op->opcode() & denox::dnx::SymIROpCode_LHSC)) {
         uint32_t sid = op->lhs();
         assert(referenced_symbols[sid] > 0);

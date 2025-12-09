@@ -10,7 +10,7 @@
 namespace vkdt_denox {
 
 static constexpr uint32_t none_sentinal = std::numeric_limits<uint32_t>::max();
-static constexpr uint32_t input_sential =
+static constexpr uint32_t external_sential =
     std::numeric_limits<uint32_t>::max() - 1;
 
 enum class SinkSourceType {
@@ -26,6 +26,7 @@ enum class SinkSourceChan {
 enum class SinkSourceFormat {
   F16,
   Byte,
+  Auto,
 };
 
 struct SinkSource {
@@ -84,7 +85,23 @@ struct Connector {
 
 struct BufferRoi {
   std::variant<Symbol, size_t> byte_size;
-  std::optional<std::pair<Symbol, Symbol>> extent;
+  std::optional<std::pair<Symbol, Symbol>>
+      extent; // (width, height) <- in pixel coordinates!
+  SinkSourceFormat format;
+};
+
+enum class InOutLayout {
+  HWC,
+  CHW,
+  CHWC8,
+};
+
+struct InOutDescriptor {
+  std::string name;
+  SinkSourceType type;
+  SinkSourceChan chan;
+  SinkSourceFormat format;
+  InOutLayout layout;
 };
 
 struct ComputeGraph {
@@ -93,6 +110,9 @@ struct ComputeGraph {
   std::vector<Connector> connectors;
   std::vector<BufferRoi> buffer_rois;
   std::optional<uint32_t> dummy_roi;
+
+  std::vector<InOutDescriptor> input_descriptors;
+  std::vector<InOutDescriptor> output_descriptors;
 };
 
 ComputeGraph

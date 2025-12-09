@@ -4,9 +4,18 @@
 #include <dnx.h>
 #include <fmt/base.h>
 #include <fmt/format.h>
-#include <limits>
-#include <mutex>
 #include <stdexcept>
+
+static size_t sizeof_format(vkdt_denox::SinkSourceFormat format) {
+  switch (format) {
+  case vkdt_denox::SinkSourceFormat::F16:
+    return 2;
+  case vkdt_denox::SinkSourceFormat::Byte:
+    return 1;
+  case vkdt_denox::SinkSourceFormat::Auto:
+    throw std::runtime_error("trying to get sizeof auto format!");
+  }
+}
 
 vkdt_denox::ComputeGraph vkdt_denox::reconstruct_compute_graph(
     const denox::dnx::Model *dnx, const CompressedWeights &compressed_weights) {
@@ -35,6 +44,7 @@ vkdt_denox::ComputeGraph vkdt_denox::reconstruct_compute_graph(
   uint32_t weight_buffer_roi_id = graph.buffer_rois.size();
   graph.buffer_rois.push_back(BufferRoi{
       .byte_size = compressed_weights.data.size(),
+      .format = SinkSourceFormat::Byte,
   });
   size_t weight_node_id = graph.nodes.size();
   graph.nodes.push_back(Node{
@@ -66,7 +76,6 @@ vkdt_denox::ComputeGraph vkdt_denox::reconstruct_compute_graph(
 
   // Write rois for input!
 
-  fmt::println("");
   for (uint32_t i = 0; i < dnx->inputs()->size(); ++i) {
     const auto *tensor_info = dnx->inputs()->Get(i);
     const uint32_t tensor_id = tensor_info->tensor();
@@ -74,6 +83,25 @@ vkdt_denox::ComputeGraph vkdt_denox::reconstruct_compute_graph(
     const uint32_t buffer_id = tensor->buffer();
     const auto *buffer = dnx->buffers()->Get(buffer_id);
     const uint32_t input_roi_id = graph.buffer_rois.size();
+
+    SinkSourceFormat format;
+    switch (tensor_info->type()) {
+    case denox::dnx::ScalarType_I16:
+    case denox::dnx::ScalarType_U16:
+    case denox::dnx::ScalarType_I32:
+    case denox::dnx::ScalarType_U32:
+    case denox::dnx::ScalarType_I64:
+    case denox::dnx::ScalarType_U64:
+    case denox::dnx::ScalarType_F32:
+    case denox::dnx::ScalarType_F64:
+      throw std::runtime_error("unsupported tensor type!");
+    case denox::dnx::ScalarType_F16:
+      format = SinkSourceFormat::F16;
+      break;
+    default:
+      throw std::runtime_error("unexpected tensor type!");
+    }
+
     // TODO: Change to extent and type based semantics.
     graph.buffer_rois.push_back(BufferRoi{
         .byte_size =
@@ -81,9 +109,10 @@ vkdt_denox::ComputeGraph vkdt_denox::reconstruct_compute_graph(
                 .type = buffer->size_type(),
                 .ptr = buffer->size(),
             },
+        .format = format,
     });
 
-    buffer_locations[buffer_id].owning_node = input_sential;
+    buffer_locations[buffer_id].owning_node = external_sential;
     buffer_locations[buffer_id].sinksource_id = i;
     buffer_locations[buffer_id].borrowing_node = none_sentinal;
     buffer_locations[buffer_id].buffer_roi_id = input_roi_id;
@@ -144,7 +173,6 @@ vkdt_denox::ComputeGraph vkdt_denox::reconstruct_compute_graph(
 
       std::vector<SinkSource> sinksources;
       uint32_t dummy_sink_id = bindings.size();
-      // TODO: Make sure that sinks are actually created.
       sinksources.reserve(bindings.size());
       for (uint32_t b = 0; b < bindings.size(); ++b) {
         uint32_t sinksource_id = b;
@@ -185,6 +213,7 @@ vkdt_denox::ComputeGraph vkdt_denox::reconstruct_compute_graph(
                   graph.dummy_roi = graph.buffer_rois.size();
                   graph.buffer_rois.push_back(BufferRoi{
                       .byte_size = 1ull, // <- possibly to small
+                      .format = SinkSourceFormat::Byte,
                   });
                 }
                 const uint32_t dummy_roi = graph.dummy_roi.value();
@@ -218,6 +247,7 @@ vkdt_denox::ComputeGraph vkdt_denox::reconstruct_compute_graph(
                         .type = buffer->size_type(),
                         .ptr = buffer->size(),
                     },
+                .format = SinkSourceFormat::Byte,
             });
             location.owning_node = node_id;
             location.buffer_roi_id = buffer_roi_id;
@@ -243,6 +273,7 @@ vkdt_denox::ComputeGraph vkdt_denox::reconstruct_compute_graph(
                 graph.dummy_roi = graph.buffer_rois.size();
                 graph.buffer_rois.push_back(BufferRoi{
                     .byte_size = 1ull,
+                    .format = SinkSourceFormat::Byte,
                 });
               }
               const uint32_t dummy_roi = graph.dummy_roi.value();
@@ -274,10 +305,14 @@ vkdt_denox::ComputeGraph vkdt_denox::reconstruct_compute_graph(
         } else {
           throw std::runtime_error("invalid tensor binding access");
         }
+
+        SinkSourceFormat format = SinkSourceFormat::Byte;
+        if (type == SinkSourceType::Read) {
+          format = SinkSourceFormat::Auto;
+        }
         assert(location.owning_node != none_sentinal);
         SinkSourceChan chan = SinkSourceChan::SSBO;
-        // TODO: Set appropriate format and roi for in / output tensors.
-        SinkSourceFormat format = SinkSourceFormat::Byte;
+        // TODO: Set appropriate format and roi for output tensors.
 
         sinksources.push_back(
             SinkSource{.name = fmt::format("b{}", b),
@@ -293,6 +328,7 @@ vkdt_denox::ComputeGraph vkdt_denox::reconstruct_compute_graph(
         graph.dummy_roi = graph.buffer_rois.size();
         graph.buffer_rois.push_back(BufferRoi{
             .byte_size = 1ull,
+            .format = SinkSourceFormat::Byte,
         });
       }
 
@@ -368,6 +404,198 @@ vkdt_denox::ComputeGraph vkdt_denox::reconstruct_compute_graph(
 
     } else {
       throw std::runtime_error("Unexpected dispatch type.");
+    }
+  }
+
+  const uint32_t output_count = dnx->outputs()->size();
+  for (uint32_t o = 0; o < output_count; ++o) {
+    const auto *tensor_info = dnx->outputs()->Get(o);
+    const uint32_t tensor_id = tensor_info->tensor();
+    const auto *tensor = dnx->tensors()->Get(tensor_id);
+    const uint32_t buffer_id = tensor->buffer();
+    auto &location = buffer_locations[buffer_id];
+    assert(location.owning_node != external_sential);
+    if (location.owning_node == none_sentinal) {
+      throw std::runtime_error("Model does not produce a output, vkdt_denox "
+                               "requires at least one output.");
+    }
+    if (location.borrowing_node != none_sentinal) {
+      throw std::runtime_error(
+          "vkdt_denox does not support this Model: "
+          "Implementation would require a dummy module "
+          "connector, which is currently not planned to be implemented!");
+    }
+    graph.connectors.push_back(Connector{
+        .src_node = location.owning_node,
+        .src_node_sinksource = location.sinksource_id,
+        .dst_node = external_sential,
+        .dst_node_sinksource = o,
+    });
+  }
+
+  // repair input & output rois and add type and meta information.
+  const uint32_t input_count = dnx->inputs()->size();
+  graph.input_descriptors.resize(input_count);
+  for (uint32_t i = 0; i < input_count; ++i) {
+    const auto *tensor_info = dnx->inputs()->Get(i);
+    const uint32_t tensor_id = tensor_info->tensor();
+    const auto *tensor = dnx->tensors()->Get(tensor_id);
+    const uint32_t buffer_id = tensor->buffer();
+    auto &location = buffer_locations[buffer_id];
+    assert(location.owning_node == external_sential);
+    assert(location.sinksource_id == i);
+    auto &roi = graph.buffer_rois[location.buffer_roi_id];
+    // TODO: Possibly modify roi
+
+    std::string name;
+    if (tensor_info->name() == nullptr) {
+      name = fmt::format("unnamed-input-{}", i);
+    } else {
+      name = tensor_info->name()->str();
+    }
+
+    SinkSourceFormat format;
+    switch (tensor_info->type()) {
+    case denox::dnx::ScalarType_I16:
+    case denox::dnx::ScalarType_U16:
+    case denox::dnx::ScalarType_I32:
+    case denox::dnx::ScalarType_U32:
+    case denox::dnx::ScalarType_I64:
+    case denox::dnx::ScalarType_U64:
+      throw std::runtime_error(
+          "vkdt_denox does not support (i8,u8,i16,u16,i32,u32,i64,u64) input / "
+          "output types.");
+    case denox::dnx::ScalarType_F32:
+    case denox::dnx::ScalarType_F64:
+      throw std::runtime_error("vkdt_denox does not support (f32, f64) input / "
+                               "output types.");
+    case denox::dnx::ScalarType_F16:
+      format = SinkSourceFormat::F16;
+      break;
+    default:
+      throw std::runtime_error("unexpected scalar type!");
+    }
+
+    SinkSourceChan chan = SinkSourceChan::SSBO;
+    InOutLayout layout;
+    switch (tensor_info->layout()) {
+    case denox::dnx::TensorLayout_HWC:
+      layout = InOutLayout::HWC;
+      break;
+    case denox::dnx::TensorLayout_CHW:
+      layout = InOutLayout::CHW;
+      break;
+    case denox::dnx::TensorLayout_CHWC8:
+      layout = InOutLayout::CHWC8;
+      break;
+    }
+    graph.input_descriptors[i].name = name;
+    graph.input_descriptors[i].type = SinkSourceType::Read;
+    graph.input_descriptors[i].format = format;
+    graph.input_descriptors[i].chan = chan;
+    graph.input_descriptors[i].layout = layout;
+  }
+
+  graph.output_descriptors.resize(output_count);
+  for (uint32_t o = 0; o < output_count; ++o) {
+    const auto *tensor_info = dnx->outputs()->Get(o);
+    const uint32_t tensor_id = tensor_info->tensor();
+    const auto *tensor = dnx->tensors()->Get(tensor_id);
+    const uint32_t buffer_id = tensor->buffer();
+    auto &location = buffer_locations[buffer_id];
+    assert(location.owning_node != none_sentinal);
+    assert(location.owning_node != external_sential);
+
+    auto &roi = graph.buffer_rois[location.buffer_roi_id];
+    // TODO: Possibly update buffer roi.
+
+    std::string name;
+    if (tensor_info->name() == nullptr) {
+      name = fmt::format("unnamed-output-{}", o);
+    } else {
+      name = tensor_info->name()->str();
+    }
+
+    SinkSourceFormat format;
+    switch (tensor_info->type()) {
+    case denox::dnx::ScalarType_I16:
+    case denox::dnx::ScalarType_U16:
+    case denox::dnx::ScalarType_I32:
+    case denox::dnx::ScalarType_U32:
+    case denox::dnx::ScalarType_I64:
+    case denox::dnx::ScalarType_U64:
+      throw std::runtime_error(
+          "vkdt_denox does not support (i8,u8,i16,u16,i32,u32,i64,u64) input / "
+          "output types.");
+    case denox::dnx::ScalarType_F32:
+    case denox::dnx::ScalarType_F64:
+      throw std::runtime_error("vkdt_denox does not support (f32, f64) input / "
+                               "output types.");
+    case denox::dnx::ScalarType_F16:
+      format = SinkSourceFormat::F16;
+      break;
+    default:
+      throw std::runtime_error("unexpected scalar type!");
+    }
+
+    SinkSourceChan chan = SinkSourceChan::SSBO;
+    InOutLayout layout;
+    switch (tensor_info->layout()) {
+    case denox::dnx::TensorLayout_HWC:
+      layout = InOutLayout::HWC;
+      break;
+    case denox::dnx::TensorLayout_CHW:
+      layout = InOutLayout::CHW;
+      break;
+    case denox::dnx::TensorLayout_CHWC8:
+      layout = InOutLayout::CHWC8;
+      break;
+    }
+    graph.output_descriptors[o].name = name;
+    graph.output_descriptors[o].type = SinkSourceType::Write;
+    graph.output_descriptors[o].format = format;
+    graph.output_descriptors[o].chan = chan;
+    graph.output_descriptors[o].layout = layout;
+
+    // update format of owning nodes sinksource
+    graph.nodes[location.owning_node]
+        .sinksources[location.sinksource_id]
+        .format = format;
+    graph.buffer_rois[location.buffer_roi_id].format = format;
+  }
+
+  // Infer all auto types.
+  //    Iterate over all connectors: From construction order we know that
+  //    all connectors are topologicalls ordered, we also know that all
+  //    edges are RAW connectors.
+  //    For each edge where dst-node::dst_sinksource has format auto, infer
+  //    type from src-node.
+  //    Special-Cases:
+  //      If src_node is external, lookup type information in
+  //      input_descriptors. If dst_node is external, lookup type information
+  //      in output_descriptors.
+  for (uint32_t i = 0; i < graph.connectors.size(); ++i) {
+    const auto &connector = graph.connectors[i];
+    assert(connector.src_node != none_sentinal);
+    assert(connector.dst_node != none_sentinal);
+
+    if (connector.src_node == external_sential) {
+      assert(connector.dst_node != external_sential);
+      const auto &input_description =
+          graph.input_descriptors[connector.src_node_sinksource];
+      graph.nodes[connector.dst_node]
+          .sinksources[connector.dst_node_sinksource]
+          .format = input_description.format;
+    } else if (connector.dst_node == external_sential) {
+      // simply skip
+    } else {
+      const auto &src = graph.nodes[connector.src_node];
+      assert(connector.src_node != external_sential);
+      assert(connector.dst_node != external_sential);
+      
+      graph.nodes[connector.dst_node].sinksources[connector.dst_node_sinksource].format 
+        = graph.nodes[connector.src_node].sinksources[connector.src_node_sinksource].format;
+
     }
   }
 
