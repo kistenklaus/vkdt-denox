@@ -170,9 +170,8 @@ void vkdt_denox::def_func_create_nodes(
           }
 
           src_compute_graph.append(fmt::format(
-              "memcpy({}_pc + {}, &pc{}, {});", node_namespace, pc.offset, p,
-
-              push_constant_type_bytesize(pc.type)));
+              "memcpy({}_pc + {}, &pc{}, sizeof({}));", node_namespace, pc.offset, p,
+              push_constant_type_to_string(pc.type)));
         }
         src_compute_graph.pop_indentation();
         src_compute_graph.append("}");
@@ -186,7 +185,7 @@ void vkdt_denox::def_func_create_nodes(
       src_compute_graph.append(fmt::format("graph, module, \"{}\", \"{}\", ",
                                            module_name, binary.name));
       src_compute_graph.append(fmt::format(
-          "{}, {}, {},",
+          "{} * DT_LOCAL_SIZE_X, {} * DT_LOCAL_SIZE_Y, {},",
           access_symbol(compute_dispatch.workgroup_count_x, referenced_symbols),
           access_symbol(compute_dispatch.workgroup_count_y, referenced_symbols),
           access_symbol(compute_dispatch.workgroup_count_z,

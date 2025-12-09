@@ -13,7 +13,7 @@
 int main() {
 
   // Read dnx file from disk.
-  std::string dnx_path = "./net.dnx";
+  std::string dnx_path = "./trivial-net.dnx";
   std::vector<uint8_t> dnx_buffer = vkdt_denox::read_file_bytes(dnx_path);
   const auto *dnx = denox::dnx::GetModel(dnx_buffer.data());
 
