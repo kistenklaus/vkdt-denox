@@ -29,7 +29,7 @@ add_executable(vkdt-denox
   
   # code generation
   ${CMAKE_CURRENT_SOURCE_DIR}/src/denox_create_nodes.cpp
-  # ${CMAKE_CURRENT_SOURCE_DIR}/src/create_nodes.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/denox_read_source.cpp
 
 )
 

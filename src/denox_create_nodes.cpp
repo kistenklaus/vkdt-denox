@@ -1,6 +1,7 @@
 #include "denox_create_nodes.hpp"
 #include "compute_graph.hpp"
 #include "symbolics.hpp"
+#include <dnx.h>
 #include <fmt/base.h>
 #include <stdexcept>
 #include <variant>
@@ -176,10 +177,10 @@ static void create_buffer_rois(SourceWriter &src, const SymbolicIR &symbolic_ir,
 
       if (buffer_roi.format != SinkSourceFormat::Byte) {
         uint32_t format_size = sinksource_format_size(buffer_roi.format);
-        src.append(
-            fmt::format("dt_roi_t roi{} = {{.wd = (uint32_t)({} / {}), .ht = 1}};", i,
-                        access_symbol(symbolic_ir, symbol, referenced_symbols),
-                        format_size));
+        src.append(fmt::format(
+            "dt_roi_t roi{} = {{.wd = (uint32_t)({} / {}), .ht = 1}};", i,
+            access_symbol(symbolic_ir, symbol, referenced_symbols),
+            format_size));
       } else {
         src.append(fmt::format(
             "dt_roi_t roi{} = {{.wd = (uint32_t)({}), .ht = 1}};", i,
@@ -289,8 +290,15 @@ static void create_graph(SourceWriter &src, const SymbolicIR &symbolic_ir,
               pcdef.append(", ");
             }
             first = false;
-            pcdef.append(fmt::format("(uint32_t)({})",
-                access_symbol(symbolic_ir, field.value, referenced_symbols)));
+            if (field.value.type == denox::dnx::ScalarSource_literal) {
+              pcdef.append(
+                  fmt::format("{}", access_symbol(symbolic_ir, field.value,
+                                                  referenced_symbols)));
+            } else {
+              pcdef.append(fmt::format(
+                  "(uint32_t)({})",
+                  access_symbol(symbolic_ir, field.value, referenced_symbols)));
+            }
           }
           pcdef.append("};");
           src.append(pcdef);

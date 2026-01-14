@@ -2,6 +2,7 @@
 #include "compress_weights.hpp"
 #include "compute_graph.hpp"
 #include "denox_create_nodes.hpp"
+#include "denox_read_source.hpp"
 #include "io.hpp"
 #include "shader_registry.hpp"
 #include "source_writer.hpp"
@@ -37,20 +38,31 @@ int main() {
 
   // //
   // // // 1. Write compressed weights to disk.
-  // vkdt_denox::write_file_bytes(module_dir / "weights.bin",
-  //                              compressed_weights.data.data(),
-  //                              compressed_weights.data.size());
-  // for (const auto &binary : shader_registry.binaries) {
-  //   vkdt_denox::write_file_bytes(module_dir / (binary.name + ".comp.spv"),
-  //                                binary.spv.data(),
-  //                                binary.spv.size() * sizeof(uint32_t));
-  // }
 
+  std::filesystem::path weights_path = module_dir / "weights.bin";
+  vkdt_denox::write_file_bytes(weights_path, compressed_weights.data.data(),
+                               compressed_weights.data.size());
+  for (const auto &binary : shader_registry.binaries) {
+    vkdt_denox::write_file_bytes(module_dir / (binary.name + ".comp.spv"),
+                                 binary.spv.data(),
+                                 binary.spv.size() * sizeof(uint32_t));
+  }
+
+  std::string weights_path_str = weights_path.string();
   vkdt_denox::SourceWriter src;
   src.add_header_guard(fmt::format("{}_CREATE_DNX_NODES_H", module_name));
-  vkdt_denox::def_func_denox_create_nodes(src, dnx, symbolic_ir, shader_registry,
+
+  src.append("\n");
+  vkdt_denox::def_func_denox_read_source(src, compute_graph, compressed_weights,
+                                         weights_path_str, module_name);
+
+  src.append("\n");
+  vkdt_denox::def_func_denox_create_nodes(src, dnx, symbolic_ir,
+  shader_registry,
                                         compressed_weights, compute_graph,
                                         module_name);
+  src.append("\n");
+
   vkdt_denox::write_file(module_dir / "denox_model.h", src.finish());
 
   fmt::println("{}", src.finish());
