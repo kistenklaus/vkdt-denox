@@ -5,6 +5,7 @@
 #include <fmt/base.h>
 #include <fmt/format.h>
 #include <stdexcept>
+#include <unordered_set>
 
 static size_t sizeof_format(vkdt_denox::SinkSourceFormat format) {
   switch (format) {
@@ -22,6 +23,7 @@ vkdt_denox::ComputeGraph vkdt_denox::reconstruct_compute_graph(
   const uint32_t buffer_count = dnx->buffers()->size();
   const uint32_t tensor_count = dnx->tensors()->size();
   const uint32_t dispatch_count = dnx->dispatches()->size();
+  std::unordered_map<std::string, uint32_t> names;
 
   // maps buffer ids to owning nodes.
   struct BufferLocation {
@@ -77,9 +79,9 @@ vkdt_denox::ComputeGraph vkdt_denox::reconstruct_compute_graph(
   // Write rois for input!
 
   for (uint32_t i = 0; i < dnx->inputs()->size(); ++i) {
-    const auto *tensor_info = dnx->inputs()->Get(i);
-    const uint32_t tensor_id = tensor_info->tensor();
+    const uint32_t tensor_id = dnx->inputs()->Get(i);
     const auto *tensor = dnx->tensors()->Get(tensor_id);
+    const auto *tensor_info = tensor->info();
     const uint32_t buffer_id = tensor->buffer();
     const auto *buffer = dnx->buffers()->Get(buffer_id);
     const uint32_t input_roi_id = graph.buffer_rois.size();
@@ -119,165 +121,101 @@ vkdt_denox::ComputeGraph vkdt_denox::reconstruct_compute_graph(
   }
 
   for (uint32_t d = 0; d < dispatch_count; ++d) {
-    const auto dispatch_type = dnx->dispatches_type()->Get(d);
-    if (dispatch_type == denox::dnx::Dispatch_ComputeDispatch) {
-      uint32_t node_id = graph.nodes.size();
-      const auto *compute_dispatch =
-          dnx->dispatches()->GetAs<denox::dnx::ComputeDispatch>(d);
+    uint32_t node_id = graph.nodes.size();
+    const auto *compute_dispatch = dnx->dispatches()->Get(d);
 
-      struct TensorBinding {
-        uint16_t set;
-        uint16_t binding;
-        uint8_t access;
-        uint32_t buffer;
-        Symbol offset;
-      };
-      std::vector<TensorBinding> bindings;
+    struct TensorBinding {
+      uint16_t set;
+      uint16_t binding;
+      uint8_t access;
+      uint32_t buffer;
+      Symbol offset;
+    };
+    std::vector<TensorBinding> bindings;
 
-      const uint32_t binding_count = compute_dispatch->bindings()->size();
-      for (uint32_t b = 0; b < binding_count; ++b) {
-        const auto *binding = compute_dispatch->bindings()->Get(b);
-        const uint32_t tensor_binding_count = binding->bindings()->size();
-        for (uint32_t t = 0; t < tensor_binding_count; ++t) {
-          const auto *tensor_binding = binding->bindings()->Get(t);
-          const uint32_t tensor_id = tensor_binding->tensor();
-          const auto *tensor = dnx->tensors()->Get(tensor_id);
-          const uint32_t buffer_id = tensor->buffer();
+    const uint32_t binding_count = compute_dispatch->bindings()->size();
+    for (uint32_t b = 0; b < binding_count; ++b) {
+      const auto *binding = compute_dispatch->bindings()->Get(b);
+      const uint32_t tensor_binding_count = binding->bindings()->size();
+      for (uint32_t t = 0; t < tensor_binding_count; ++t) {
+        const auto *tensor_binding = binding->bindings()->Get(t);
+        const uint32_t tensor_id = tensor_binding->tensor();
+        const auto *tensor = dnx->tensors()->Get(tensor_id);
+        const uint32_t buffer_id = tensor->buffer();
 
-          bindings.push_back(TensorBinding{
-              .set = binding->set(),
-              .binding = tensor_binding->binding(),
-              .access = tensor_binding->access(),
-              .buffer = buffer_id,
-              .offset =
-                  Symbol{
-                      .type = tensor->offset_type(),
-                      .ptr = tensor->offset(),
-                  },
-          });
-        }
+        bindings.push_back(TensorBinding{
+            .set = binding->set(),
+            .binding = tensor_binding->binding(),
+            .access = tensor_binding->access(),
+            .buffer = buffer_id,
+            .offset =
+                Symbol{
+                    .type = tensor->offset_type(),
+                    .ptr = tensor->offset(),
+                },
+        });
       }
-      std::sort(bindings.begin(), bindings.end(),
-                [](const auto &lhs, const auto &rhs) {
-                  if (lhs.set < rhs.set) {
-                    return true;
-                  } else if (lhs.set > rhs.set) {
-                    return false;
-                  } else {
-                    return lhs.binding < rhs.binding;
-                  }
-                });
-      // TODO: Enforce vkdt binding semantics.
-      // - Linear descriptor bindings, starting at binding 0.
-      // - Only use set 1.
-
-      std::vector<SinkSource> sinksources;
-      uint32_t dummy_sink_id = bindings.size();
-      sinksources.reserve(bindings.size());
-      for (uint32_t b = 0; b < bindings.size(); ++b) {
-        uint32_t sinksource_id = b;
-        const auto &binding = bindings[b];
-        const auto *buffer = dnx->buffers()->Get(binding.buffer);
-
-        auto &location = buffer_locations[binding.buffer];
-
-        SinkSourceType type;
-        if (binding.access == denox::dnx::Access_WriteOnly) {
-          if (location.owning_node != none_sentinal) {
-            // Some other nodes has already written to this node.
-            // We apply the following rule:
-            // Let A be the owning node (i.e. the node that initally wrote)
-            // Let B be the current node (i.e. node_id)
-            // Add RAW edge between A and B
-            //   (This is slightly inaccurate WAW would be correct, but RAW wil
-            //   lead to the same synchronization mechanism on most devices).
-            //
-            // If borrowing node is unequal to sential, then let this node be C.
-            // Add dummy write ssbo to C.
-            // Add RAW edge between C and B.
-            // This ensures that A -> C -> B
-            // Finally update borrowing_node.
-            type = SinkSourceType::Read;
-            graph.connectors.push_back(Connector{
-                .src_node = location.owning_node,
-                .src_node_sinksource = location.sinksource_id,
-                .dst_node = node_id,
-                .dst_node_sinksource = sinksource_id,
-            });
-
-            if (location.borrowing_node != none_sentinal) {
-              // insert dummy edge
-              auto &node_c = graph.nodes[location.borrowing_node];
-              if (!node_c.dummy_source.has_value()) {
-                if (!graph.dummy_roi.has_value()) {
-                  graph.dummy_roi = graph.buffer_rois.size();
-                  graph.buffer_rois.push_back(BufferRoi{
-                      .byte_size = 1ull, // <- possibly to small
-                      .format = SinkSourceFormat::Byte,
-                  });
+    }
+    std::sort(bindings.begin(), bindings.end(),
+              [](const auto &lhs, const auto &rhs) {
+                if (lhs.set < rhs.set) {
+                  return true;
+                } else if (lhs.set > rhs.set) {
+                  return false;
+                } else {
+                  return lhs.binding < rhs.binding;
                 }
-                const uint32_t dummy_roi = graph.dummy_roi.value();
-                node_c.dummy_source = node_c.sinksources.size();
-                node_c.sinksources.push_back(SinkSource{
-                    .name = "dummy-source",
-                    .type = SinkSourceType::Write,
-                    .chan = SinkSourceChan::SSBO,
-                    .format = SinkSourceFormat::Byte,
-                    .buffer_roi_id = dummy_roi,
-                });
-              }
-              const uint32_t dummy_source = node_c.dummy_source.value();
-              const uint32_t dummy_sink = dummy_sink_id++;
-
-              graph.connectors.push_back(Connector{
-                  .src_node = location.borrowing_node,
-                  .src_node_sinksource = dummy_source,
-                  .dst_node = node_id,
-                  .dst_node_sinksource = dummy_sink,
               });
-            }
-            location.borrowing_node = node_id;
-          } else {
-            assert(location.owning_node == none_sentinal);
-            assert(location.buffer_roi_id == none_sentinal);
-            uint32_t buffer_roi_id = graph.buffer_rois.size();
-            graph.buffer_rois.push_back(BufferRoi{
-                .byte_size =
-                    Symbol{
-                        .type = buffer->size_type(),
-                        .ptr = buffer->size(),
-                    },
-                .format = SinkSourceFormat::Byte,
-            });
-            location.owning_node = node_id;
-            location.buffer_roi_id = buffer_roi_id;
-            location.borrowing_node = none_sentinal;
-            location.sinksource_id = sinksource_id;
-            type = SinkSourceType::Write; // <- allocates resource
-          }
-          assert(location.buffer_roi_id != none_sentinal);
-        } else if (binding.access == denox::dnx::Access_ReadOnly) {
-          assert(location.owning_node != none_sentinal);
-          assert(location.buffer_roi_id != none_sentinal);
+    // TODO: Enforce vkdt binding semantics.
+    // - Linear descriptor bindings, starting at binding 0.
+    // - Only use set 1.
+
+    std::vector<SinkSource> sinksources;
+    uint32_t dummy_sink_id = bindings.size();
+    sinksources.reserve(bindings.size());
+    for (uint32_t b = 0; b < bindings.size(); ++b) {
+      uint32_t sinksource_id = b;
+      const auto &binding = bindings[b];
+      const auto *buffer = dnx->buffers()->Get(binding.buffer);
+
+      auto &location = buffer_locations[binding.buffer];
+
+      SinkSourceType type;
+      if (binding.access == denox::dnx::Access_WriteOnly) {
+        if (location.owning_node != none_sentinal) {
+          // Some other nodes has already written to this node.
+          // We apply the following rule:
+          // Let A be the owning node (i.e. the node that initally wrote)
+          // Let B be the current node (i.e. node_id)
+          // Add RAW edge between A and B
+          //   (This is slightly inaccurate WAW would be correct, but RAW wil
+          //   lead to the same synchronization mechanism on most devices).
+          //
+          // If borrowing node is unequal to sential, then let this node be C.
+          // Add dummy write ssbo to C.
+          // Add RAW edge between C and B.
+          // This ensures that A -> C -> B
+          // Finally update borrowing_node.
+          type = SinkSourceType::Read;
           graph.connectors.push_back(Connector{
               .src_node = location.owning_node,
               .src_node_sinksource = location.sinksource_id,
               .dst_node = node_id,
               .dst_node_sinksource = sinksource_id,
           });
+
           if (location.borrowing_node != none_sentinal) {
-            // insert dummy edge.
+            // insert dummy edge
             auto &node_c = graph.nodes[location.borrowing_node];
             if (!node_c.dummy_source.has_value()) {
               if (!graph.dummy_roi.has_value()) {
                 graph.dummy_roi = graph.buffer_rois.size();
                 graph.buffer_rois.push_back(BufferRoi{
-                    .byte_size = 1ull,
+                    .byte_size = 1ull, // <- possibly to small
                     .format = SinkSourceFormat::Byte,
                 });
               }
               const uint32_t dummy_roi = graph.dummy_roi.value();
-
               node_c.dummy_source = node_c.sinksources.size();
               node_c.sinksources.push_back(SinkSource{
                   .name = "dummy-source",
@@ -297,121 +235,196 @@ vkdt_denox::ComputeGraph vkdt_denox::reconstruct_compute_graph(
                 .dst_node_sinksource = dummy_sink,
             });
           }
-
-          type = SinkSourceType::Read;
-        } else if (binding.access == denox::dnx::Access_ReadWrite) {
-          throw std::runtime_error(
-              "vkdt_denox: readwrite access is not supported!");
+          location.borrowing_node = node_id;
         } else {
-          throw std::runtime_error("invalid tensor binding access");
+          assert(location.owning_node == none_sentinal);
+          assert(location.buffer_roi_id == none_sentinal);
+          uint32_t buffer_roi_id = graph.buffer_rois.size();
+          graph.buffer_rois.push_back(BufferRoi{
+              .byte_size =
+                  Symbol{
+                      .type = buffer->size_type(),
+                      .ptr = buffer->size(),
+                  },
+              .format = SinkSourceFormat::Byte,
+          });
+          location.owning_node = node_id;
+          location.buffer_roi_id = buffer_roi_id;
+          location.borrowing_node = none_sentinal;
+          location.sinksource_id = sinksource_id;
+          type = SinkSourceType::Write; // <- allocates resource
         }
-
-        SinkSourceFormat format = SinkSourceFormat::Byte;
-        if (type == SinkSourceType::Read) {
-          format = SinkSourceFormat::Auto;
-        }
+        assert(location.buffer_roi_id != none_sentinal);
+      } else if (binding.access == denox::dnx::Access_ReadOnly) {
         assert(location.owning_node != none_sentinal);
-        SinkSourceChan chan = SinkSourceChan::SSBO;
-        // TODO: Set appropriate format and roi for output tensors.
-
-        sinksources.push_back(
-            SinkSource{.name = fmt::format("b{}", b),
-                       .type = type,
-                       .chan = chan,
-                       .format = format,
-                       .buffer_roi_id = location.buffer_roi_id});
-      }
-
-      uint32_t dummy_sink_count = dummy_sink_id - bindings.size();
-
-      if (dummy_sink_count != 0 && !graph.dummy_roi.has_value()) {
-        graph.dummy_roi = graph.buffer_rois.size();
-        graph.buffer_rois.push_back(BufferRoi{
-            .byte_size = 1ull,
-            .format = SinkSourceFormat::Byte,
+        assert(location.buffer_roi_id != none_sentinal);
+        graph.connectors.push_back(Connector{
+            .src_node = location.owning_node,
+            .src_node_sinksource = location.sinksource_id,
+            .dst_node = node_id,
+            .dst_node_sinksource = sinksource_id,
         });
-      }
+        if (location.borrowing_node != none_sentinal) {
+          // insert dummy edge.
+          auto &node_c = graph.nodes[location.borrowing_node];
+          if (!node_c.dummy_source.has_value()) {
+            if (!graph.dummy_roi.has_value()) {
+              graph.dummy_roi = graph.buffer_rois.size();
+              graph.buffer_rois.push_back(BufferRoi{
+                  .byte_size = 1ull,
+                  .format = SinkSourceFormat::Byte,
+              });
+            }
+            const uint32_t dummy_roi = graph.dummy_roi.value();
 
-      for (uint32_t i = 0; i < dummy_sink_count; ++i) {
+            node_c.dummy_source = node_c.sinksources.size();
+            node_c.sinksources.push_back(SinkSource{
+                .name = "dummy-source",
+                .type = SinkSourceType::Write,
+                .chan = SinkSourceChan::SSBO,
+                .format = SinkSourceFormat::Byte,
+                .buffer_roi_id = dummy_roi,
+            });
+          }
+          const uint32_t dummy_source = node_c.dummy_source.value();
+          const uint32_t dummy_sink = dummy_sink_id++;
 
-        sinksources.push_back(SinkSource{
-            .name = fmt::format("dummy-sink-{}", i),
-            .type = SinkSourceType::Read,
-            .chan = SinkSourceChan::SSBO,
-            .format = SinkSourceFormat::Byte,
-            .buffer_roi_id = graph.dummy_roi.value(),
-        });
-      }
-
-      Node node;
-      node.sinksources = std::move(sinksources);
-      ComputeDispatch node_compute_dispatch;
-      node_compute_dispatch.binary_id = compute_dispatch->binary_id();
-      node_compute_dispatch.workgroup_count_x = Symbol{
-          .type = compute_dispatch->workgroup_count_x_type(),
-          .ptr = compute_dispatch->workgroup_count_x(),
-      };
-      node_compute_dispatch.workgroup_count_y = Symbol{
-          .type = compute_dispatch->workgroup_count_y_type(),
-          .ptr = compute_dispatch->workgroup_count_y(),
-      };
-      node_compute_dispatch.workgroup_count_z = Symbol{
-          .type = compute_dispatch->workgroup_count_z_type(),
-          .ptr = compute_dispatch->workgroup_count_z(),
-      };
-      uint16_t pc_size = compute_dispatch->push_constant()->size();
-      uint32_t pc_count = compute_dispatch->push_constant()->fields()->size();
-      std::vector<PushConstantField> fields(pc_count);
-      for (uint32_t p = 0; p < pc_count; ++p) {
-        const auto *field = compute_dispatch->push_constant()->fields()->Get(p);
-        fields[p].offset = field->offset();
-        fields[p].value = Symbol{
-            .type = field->source_type(),
-            .ptr = field->source(),
-        };
-        switch (field->dtype()) {
-        case denox::dnx::ScalarType_I16:
-          fields[p].type = PushConstantType::I16;
-          break;
-        case denox::dnx::ScalarType_U16:
-          fields[p].type = PushConstantType::U16;
-          break;
-        case denox::dnx::ScalarType_I32:
-          fields[p].type = PushConstantType::I32;
-          break;
-        case denox::dnx::ScalarType_U32:
-          fields[p].type = PushConstantType::U32;
-          break;
-        case denox::dnx::ScalarType_I64:
-          fields[p].type = PushConstantType::I64;
-          break;
-        case denox::dnx::ScalarType_U64:
-          fields[p].type = PushConstantType::U64;
-          break;
-        case denox::dnx::ScalarType_F16:
-        case denox::dnx::ScalarType_F32:
-        case denox::dnx::ScalarType_F64:
-          throw std::runtime_error("vkdt_denox does currently not support "
-                                   "floating point push constants.");
+          graph.connectors.push_back(Connector{
+              .src_node = location.borrowing_node,
+              .src_node_sinksource = dummy_source,
+              .dst_node = node_id,
+              .dst_node_sinksource = dummy_sink,
+          });
         }
-      }
-      node_compute_dispatch.pc = PushConstants{
-          .size = pc_size,
-          .fields = std::move(fields),
-      };
-      node.op = std::move(node_compute_dispatch);
-      graph.nodes.push_back(std::move(node));
 
-    } else {
-      throw std::runtime_error("Unexpected dispatch type.");
+        type = SinkSourceType::Read;
+      } else if (binding.access == denox::dnx::Access_ReadWrite) {
+        throw std::runtime_error(
+            "vkdt_denox: readwrite access is not supported!");
+      } else {
+        throw std::runtime_error("invalid tensor binding access");
+      }
+
+      SinkSourceFormat format = SinkSourceFormat::Byte;
+      if (type == SinkSourceType::Read) {
+        format = SinkSourceFormat::Auto;
+      }
+      assert(location.owning_node != none_sentinal);
+      SinkSourceChan chan = SinkSourceChan::SSBO;
+      // TODO: Set appropriate format and roi for output tensors.
+
+      sinksources.push_back(
+          SinkSource{.name = fmt::format("{}", char('a' + b)),
+                     .type = type,
+                     .chan = chan,
+                     .format = format,
+                     .buffer_roi_id = location.buffer_roi_id});
     }
+
+    uint32_t dummy_sink_count = dummy_sink_id - bindings.size();
+
+    if (dummy_sink_count != 0 && !graph.dummy_roi.has_value()) {
+      graph.dummy_roi = graph.buffer_rois.size();
+      graph.buffer_rois.push_back(BufferRoi{
+          .byte_size = 1ull,
+          .format = SinkSourceFormat::Byte,
+      });
+    }
+
+    for (uint32_t i = 0; i < dummy_sink_count; ++i) {
+
+      sinksources.push_back(SinkSource{
+          .name = fmt::format("dummy-sink-{}", i),
+          .type = SinkSourceType::Read,
+          .chan = SinkSourceChan::SSBO,
+          .format = SinkSourceFormat::Byte,
+          .buffer_roi_id = graph.dummy_roi.value(),
+      });
+    }
+
+    Node node;
+    node.sinksources = std::move(sinksources);
+    ComputeDispatch node_compute_dispatch;
+    if (compute_dispatch->info() && compute_dispatch->info()->name()) {
+      std::string name = compute_dispatch->info()->name()->str();
+      std::replace(name.begin(), name.end(), '-', '_');
+      std::replace(name.begin(), name.end(), '+', '_');
+
+      if (names.contains(name)) {
+        uint32_t suffix = names[name];
+        names[name] += 1;
+        name = fmt::format("{}_{}", name, suffix);
+      } else {
+        names[name] = 1;
+      }
+
+      node_compute_dispatch.name = name;
+    } else {
+      node_compute_dispatch.name = fmt::format("n{}", d);
+    }
+
+    node_compute_dispatch.binary_id = compute_dispatch->binary_id();
+    node_compute_dispatch.workgroup_count_x = Symbol{
+        .type = compute_dispatch->workgroup_count_x_type(),
+        .ptr = compute_dispatch->workgroup_count_x(),
+    };
+    node_compute_dispatch.workgroup_count_y = Symbol{
+        .type = compute_dispatch->workgroup_count_y_type(),
+        .ptr = compute_dispatch->workgroup_count_y(),
+    };
+    node_compute_dispatch.workgroup_count_z = Symbol{
+        .type = compute_dispatch->workgroup_count_z_type(),
+        .ptr = compute_dispatch->workgroup_count_z(),
+    };
+    uint16_t pc_size = compute_dispatch->push_constant()->size();
+    uint32_t pc_count = compute_dispatch->push_constant()->fields()->size();
+    std::vector<PushConstantField> fields(pc_count);
+    for (uint32_t p = 0; p < pc_count; ++p) {
+      const auto *field = compute_dispatch->push_constant()->fields()->Get(p);
+      fields[p].offset = field->offset();
+      fields[p].value = Symbol{
+          .type = field->source_type(),
+          .ptr = field->source(),
+      };
+      switch (field->dtype()) {
+      case denox::dnx::ScalarType_I16:
+        fields[p].type = PushConstantType::I16;
+        break;
+      case denox::dnx::ScalarType_U16:
+        fields[p].type = PushConstantType::U16;
+        break;
+      case denox::dnx::ScalarType_I32:
+        fields[p].type = PushConstantType::I32;
+        break;
+      case denox::dnx::ScalarType_U32:
+        fields[p].type = PushConstantType::U32;
+        break;
+      case denox::dnx::ScalarType_I64:
+        fields[p].type = PushConstantType::I64;
+        break;
+      case denox::dnx::ScalarType_U64:
+        fields[p].type = PushConstantType::U64;
+        break;
+      case denox::dnx::ScalarType_F16:
+      case denox::dnx::ScalarType_F32:
+      case denox::dnx::ScalarType_F64:
+        throw std::runtime_error("vkdt_denox does currently not support "
+                                 "floating point push constants.");
+      }
+    }
+    node_compute_dispatch.pc = PushConstants{
+        .size = pc_size,
+        .fields = std::move(fields),
+    };
+    node.op = std::move(node_compute_dispatch);
+    graph.nodes.push_back(std::move(node));
   }
 
   const uint32_t output_count = dnx->outputs()->size();
   for (uint32_t o = 0; o < output_count; ++o) {
-    const auto *tensor_info = dnx->outputs()->Get(o);
-    const uint32_t tensor_id = tensor_info->tensor();
+    const uint32_t tensor_id = dnx->outputs()->Get(o);
     const auto *tensor = dnx->tensors()->Get(tensor_id);
+    const auto *tensor_info = tensor->info();
     const uint32_t buffer_id = tensor->buffer();
     auto &location = buffer_locations[buffer_id];
     assert(location.owning_node != external_sential);
@@ -437,9 +450,9 @@ vkdt_denox::ComputeGraph vkdt_denox::reconstruct_compute_graph(
   const uint32_t input_count = dnx->inputs()->size();
   graph.input_descriptors.resize(input_count);
   for (uint32_t i = 0; i < input_count; ++i) {
-    const auto *tensor_info = dnx->inputs()->Get(i);
-    const uint32_t tensor_id = tensor_info->tensor();
+    const uint32_t tensor_id = dnx->inputs()->Get(i);
     const auto *tensor = dnx->tensors()->Get(tensor_id);
+    const auto *tensor_info = tensor->info();
     const uint32_t buffer_id = tensor->buffer();
     auto &location = buffer_locations[buffer_id];
     assert(location.owning_node == external_sential);
@@ -478,16 +491,23 @@ vkdt_denox::ComputeGraph vkdt_denox::reconstruct_compute_graph(
 
     SinkSourceChan chan = SinkSourceChan::SSBO;
     InOutLayout layout;
-    switch (tensor_info->layout()) {
-    case denox::dnx::TensorLayout_HWC:
+    switch (tensor_info->format()) {
+    case denox::dnx::TensorFormat_SSBO_HWC:
       layout = InOutLayout::HWC;
       break;
-    case denox::dnx::TensorLayout_CHW:
+    case denox::dnx::TensorFormat_SSBO_CHW:
       layout = InOutLayout::CHW;
       break;
-    case denox::dnx::TensorLayout_CHWC8:
+    case denox::dnx::TensorFormat_SSBO_CHWC8:
       layout = InOutLayout::CHWC8;
       break;
+    case denox::dnx::TensorFormat_UNKNOWN:
+      throw std::runtime_error("invalid dnx: input with unknown format!");
+    case denox::dnx::TensorFormat_TEX_RGBA:
+    case denox::dnx::TensorFormat_TEX_RGB:
+    case denox::dnx::TensorFormat_TEX_RG:
+    case denox::dnx::TensorFormat_TEX_R:
+      throw std::runtime_error("texture formats not implemented");
     }
     graph.input_descriptors[i].name = name;
     graph.input_descriptors[i].type = SinkSourceType::Read;
@@ -498,9 +518,9 @@ vkdt_denox::ComputeGraph vkdt_denox::reconstruct_compute_graph(
 
   graph.output_descriptors.resize(output_count);
   for (uint32_t o = 0; o < output_count; ++o) {
-    const auto *tensor_info = dnx->outputs()->Get(o);
-    const uint32_t tensor_id = tensor_info->tensor();
+    const uint32_t tensor_id = dnx->outputs()->Get(o);
     const auto *tensor = dnx->tensors()->Get(tensor_id);
+    const auto *tensor_info = tensor->info();
     const uint32_t buffer_id = tensor->buffer();
     auto &location = buffer_locations[buffer_id];
     assert(location.owning_node != none_sentinal);
@@ -540,16 +560,23 @@ vkdt_denox::ComputeGraph vkdt_denox::reconstruct_compute_graph(
 
     SinkSourceChan chan = SinkSourceChan::SSBO;
     InOutLayout layout;
-    switch (tensor_info->layout()) {
-    case denox::dnx::TensorLayout_HWC:
+    switch (tensor_info->format()) {
+    case denox::dnx::TensorFormat_SSBO_HWC:
       layout = InOutLayout::HWC;
       break;
-    case denox::dnx::TensorLayout_CHW:
+    case denox::dnx::TensorFormat_SSBO_CHW:
       layout = InOutLayout::CHW;
       break;
-    case denox::dnx::TensorLayout_CHWC8:
+    case denox::dnx::TensorFormat_SSBO_CHWC8:
       layout = InOutLayout::CHWC8;
       break;
+    case denox::dnx::TensorFormat_UNKNOWN:
+      throw std::runtime_error("invalid dnx: output with unknown format!");
+    case denox::dnx::TensorFormat_TEX_RGBA:
+    case denox::dnx::TensorFormat_TEX_RGB:
+    case denox::dnx::TensorFormat_TEX_RG:
+    case denox::dnx::TensorFormat_TEX_R:
+      throw std::runtime_error("texture formats are not implemented.");
     }
     graph.output_descriptors[o].name = name;
     graph.output_descriptors[o].type = SinkSourceType::Write;
@@ -592,10 +619,12 @@ vkdt_denox::ComputeGraph vkdt_denox::reconstruct_compute_graph(
       const auto &src = graph.nodes[connector.src_node];
       assert(connector.src_node != external_sential);
       assert(connector.dst_node != external_sential);
-      
-      graph.nodes[connector.dst_node].sinksources[connector.dst_node_sinksource].format 
-        = graph.nodes[connector.src_node].sinksources[connector.src_node_sinksource].format;
 
+      graph.nodes[connector.dst_node]
+          .sinksources[connector.dst_node_sinksource]
+          .format = graph.nodes[connector.src_node]
+                        .sinksources[connector.src_node_sinksource]
+                        .format;
     }
   }
 

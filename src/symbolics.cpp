@@ -1,5 +1,6 @@
 #include "symbolics.hpp"
 #include <dnx.h>
+#include <fmt/format.h>
 #include <stdexcept>
 
 vkdt_denox::SymbolicIR
@@ -7,31 +8,35 @@ vkdt_denox::read_symbolic_ir(const denox::dnx::Model *dnx) {
   SymbolicIR ir;
   const uint32_t var_count = dnx->sym_ir()->var_count();
   const uint32_t symbol_count = dnx->sym_ir()->ops()->size() + var_count;
-
-  // 1. Search for all symbols that are even used anywhere.
-
   ir.symir = dnx->sym_ir();
 
-  const uint32_t input_count = dnx->inputs()->size();
-  ir.sym_sources.resize(var_count);
-  for (uint32_t i = 0; i < input_count; ++i) {
-    const auto *tensor_info = dnx->inputs()->Get(i);
-    if (tensor_info->width_type() == denox::dnx::ScalarSource_symbolic) {
-      uint32_t sid = tensor_info->width_as_symbolic()->sid();
-      if (sid < var_count) {
-        ir.sym_sources[sid].dim = SymbolicVarSourceDim::Width;
-        ir.sym_sources[sid].input_index = i;
-      }
+  const auto *valueNames = dnx->value_names();
+
+  ir.vars.resize(var_count);
+  std::vector<bool> set(var_count, false);
+
+  for (uint32_t i = 0; i < valueNames->size(); ++i) {
+    const auto *valueName = valueNames->Get(i);
+    if (valueName->value_type() == denox::dnx::ScalarSource_literal) {
+      continue; // we don't care about constant names here
     }
-    if (tensor_info->height_type() == denox::dnx::ScalarSource_symbolic) {
-      uint32_t sid = tensor_info->height_as_symbolic()->sid();
-      if (sid < var_count) {
-        ir.sym_sources[sid].dim = SymbolicVarSourceDim::Height;
-        ir.sym_sources[sid].input_index = i;
-      }
+    assert(valueName->value_type() == denox::dnx::ScalarSource_symbolic);
+    const auto *symref = valueName->value_as_symbolic();
+    uint32_t sid = symref->sid();
+    if (sid >= var_count) {
+      // we don't care about intermediate value names!
+      continue;
+    }
+    std::string name = valueName->name()->str();
+    ir.vars[sid] = name;
+    set[sid] = true;
+  }
+  for (uint32_t i = 0; i < var_count; ++i) {
+    if (set[i] == false) {
+      throw std::runtime_error(
+          "vkdt-denox requires all dynamic extents to have names!");
     }
   }
-
   return ir;
 }
 

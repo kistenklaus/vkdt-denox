@@ -58,6 +58,7 @@ struct PushConstants {
 };
 
 struct ComputeDispatch {
+  std::string name;
   uint32_t binary_id;
   Symbol workgroup_count_x;
   Symbol workgroup_count_y;

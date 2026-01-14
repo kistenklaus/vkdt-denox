@@ -4,19 +4,9 @@
 
 namespace vkdt_denox {
 
-enum class SymbolicVarSourceDim {
-  Height,
-  Width,
-};
-
-struct SymbolicVarSource {
-  uint32_t input_index;
-  SymbolicVarSourceDim dim;
-};
-
 struct SymbolicIR {
   const denox::dnx::SymIR *symir;
-  std::vector<SymbolicVarSource> sym_sources;
+  std::vector<std::string> vars;
 };
 
 struct Symbol {

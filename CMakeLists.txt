@@ -17,13 +17,19 @@ include(cmake/flatbuffers.cmake)
 include(cmake/dnx.cmake)
 
 add_executable(vkdt-denox 
+  # entry
   ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
+  # utilitiy
   ${CMAKE_CURRENT_SOURCE_DIR}/src/io.cpp
+  # preprocessing
   ${CMAKE_CURRENT_SOURCE_DIR}/src/symbolics.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/create_nodes.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/compute_graph.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/compress_weights.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/shader_registry.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/compute_graph.cpp
+  
+  # code generation
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/denox_create_nodes.cpp
+  # ${CMAKE_CURRENT_SOURCE_DIR}/src/create_nodes.cpp
 
 )
 
