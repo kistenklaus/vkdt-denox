@@ -75,8 +75,6 @@ static void eval_symbolics(SourceWriter &src, const SymbolicIR &ir,
     expressions[i] = fmt::format("int64_t {} = {};", symbol_name, expr);
   }
 
-  fmt::println("ref-count {}", ref_counts[114]);
-
   std::vector<bool> pruned_expressions(m, false);
 
   while (true) {
@@ -403,10 +401,8 @@ static void create_graph(SourceWriter &src, const SymbolicIR &symbolic_ir,
     }
   }
   uint32_t m = compute_graph.connectors.size();
-  fmt::println("connector-count: {}", m);
   for (uint32_t i = 0; i < m; ++i) {
     const auto &connector = compute_graph.connectors[i];
-    fmt::println("src = {}, dst = {}", connector.src_node, connector.dst_node);
     if (connector.src_node == external_sential) {
       assert(connector.dst_node != external_sential);
       const uint32_t input_index = connector.src_node_sinksource;

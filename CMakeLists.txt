@@ -20,9 +20,7 @@ include(cmake/spdlog.cmake)
 include(cmake/flatbuffers.cmake)
 include(cmake/dnx.cmake)
 
-add_executable(vkdt-denox 
-  # entry
-  ${CMAKE_CURRENT_SOURCE_DIR}/codegen/main.cpp
+add_library(vkdt-denox-codegen
   # utilitiy
   ${CMAKE_CURRENT_SOURCE_DIR}/codegen/io.cpp
   # preprocessing
@@ -38,27 +36,39 @@ add_executable(vkdt-denox
 )
 
 if (VKDT_DENOX_SAN)
-  target_compile_options(vkdt-denox PRIVATE -fsanitize=undefined -fsanitize=address)
-  target_link_options(vkdt-denox PRIVATE -fsanitize=undefined -fsanitize=address)
+  target_compile_options(vkdt-denox-codegen PRIVATE -fsanitize=undefined -fsanitize=address)
+  target_link_options(vkdt-denox-codegen PRIVATE -fsanitize=undefined -fsanitize=address)
 endif()
 
-target_compile_features(vkdt-denox PUBLIC cxx_std_20)
+target_compile_features(vkdt-denox-codegen PUBLIC cxx_std_20)
 
-set_target_properties(vkdt-denox PROPERTIES CXX_STANDARD 20)
-set_target_properties(vkdt-denox PROPERTIES CXX_STANDARD_REQUIRED ON)
-# set_target_properties(vkdt-denox PROPERTIES POSITION_INDEPENDENT_CODE ON)
+set_target_properties(vkdt-denox-codegen PROPERTIES CXX_STANDARD 20)
+set_target_properties(vkdt-denox-codegen PROPERTIES CXX_STANDARD_REQUIRED ON)
 
-target_include_directories(vkdt-denox
+target_include_directories(vkdt-denox-codegen
   PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/codegen
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/codegen>
 )
 
-target_link_libraries(vkdt-denox
-  PRIVATE
+target_link_libraries(vkdt-denox-codegen
+  PUBLIC
     denox::fmt
     denox::spdlog
     denox::dnx
 )
+
+
+
+add_executable(vkdt-denox 
+  ${CMAKE_CURRENT_SOURCE_DIR}/cli/main.cpp
+)
+
+target_link_libraries(vkdt-denox 
+  PRIVATE 
+    vkdt-denox-codegen
+    denox::cli11
+)
+
 
 foreach(cfg DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
     set_target_properties(vkdt-denox PROPERTIES
