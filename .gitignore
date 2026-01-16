@@ -40,7 +40,6 @@
 # debug information files
 *.dwo
 
-/cmake
 /build
 /.cache
 **.c
@@ -51,3 +50,10 @@
 /.idea
 /cmake-build-debug
 /cmake-build-release
+
+*.zst
+*.gz
+*.tar
+*.pkg
+/src
+/pkg

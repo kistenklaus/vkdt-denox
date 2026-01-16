@@ -4,6 +4,10 @@ project(vkdt-denox CXX)
 option(VKDT_DENOX_SAN "Enables sanitizers" OFF)
 option(VKDT_DENOX_STRICT_WARNINGS "Enables most warnings flags" ON)
 
+option(VKDT_DENOX_USE_SYSTEM_FLATBUFFERS
+  "Use system-installed FlatBuffers instead of FetchContent"
+  ON)
+
 if (NOT DEFINED CMAKE_BUILD_TYPE OR CMAKE_BUILD_TYPE STREQUAL "") 
   set(CMAKE_BUILD_TYPE "Release")
 endif()
@@ -18,18 +22,18 @@ include(cmake/dnx.cmake)
 
 add_executable(vkdt-denox 
   # entry
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/codegen/main.cpp
   # utilitiy
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/io.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/codegen/io.cpp
   # preprocessing
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/symbolics.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/compress_weights.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/shader_registry.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/compute_graph.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/codegen/symbolics.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/codegen/compress_weights.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/codegen/shader_registry.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/codegen/compute_graph.cpp
   
   # code generation
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/denox_create_nodes.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/denox_read_source.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/codegen/denox_create_nodes.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/codegen/denox_read_source.cpp
 
 )
 
@@ -46,7 +50,7 @@ set_target_properties(vkdt-denox PROPERTIES CXX_STANDARD_REQUIRED ON)
 
 target_include_directories(vkdt-denox
   PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/codegen
 )
 
 target_link_libraries(vkdt-denox
@@ -56,6 +60,13 @@ target_link_libraries(vkdt-denox
     denox::dnx
 )
 
+foreach(cfg DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
+    set_target_properties(vkdt-denox PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY_${cfg} ${CMAKE_BINARY_DIR}/bin
+    )
+endforeach()
 
-
+install(TARGETS vkdt-denox 
+  RUNTIME DESTINATION bin
+)
 
