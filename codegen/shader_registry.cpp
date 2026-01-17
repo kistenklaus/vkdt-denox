@@ -11,7 +11,7 @@ vkdt_denox::create_shader_registry(const denox::dnx::Model *dnx) {
 
   for (uint32_t i = 0; i < binary_count; ++i) {
     const auto *binary = dnx->shader_binaries()->Get(i);
-    registry.binaries[i].name = fmt::format("shader-{}", i);
+    registry.binaries[i].name = fmt::format("comp{}", i);
     registry.binaries[i].spv = std::span<const uint32_t>{
         binary->spirv()->data(), binary->spirv()->size()};
   }
