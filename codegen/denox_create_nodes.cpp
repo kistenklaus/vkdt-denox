@@ -299,6 +299,7 @@ static void create_graph(SourceWriter &src, const SymbolicIR &symbolic_ir,
             }
           }
           pcdef.append("};");
+
           src.append(pcdef);
 
         } else {
@@ -357,7 +358,7 @@ static void create_graph(SourceWriter &src, const SymbolicIR &symbolic_ir,
       for (uint32_t i = 0; i < node.sinksources.size(); ++i) {
         const auto &sinksource = node.sinksources[i];
         std::string sinksource_desc = fmt::format(
-            "\"{}\", \"{}\", \"{}\", \"{}\", roi{}", sinksource.name,
+            "\"{}\", \"{}\", \"{}\", \"{}\", &roi{}", sinksource.name,
             sinksource_type_to_string(sinksource.type),
             sinksource_chan_to_string(sinksource.chan),
             sinksource_format_to_string(sinksource.format),
@@ -384,7 +385,7 @@ static void create_graph(SourceWriter &src, const SymbolicIR &symbolic_ir,
       for (uint32_t i = 0; i < node.sinksources.size(); ++i) {
         const auto &sinksource = node.sinksources[i];
         std::string sinksource_desc = fmt::format(
-            "\"{}\", \"{}\", \"{}\", \"{}\", roi{}", sinksource.name,
+            "\"{}\", \"{}\", \"{}\", \"{}\", &roi{}", sinksource.name,
             sinksource_type_to_string(sinksource.type),
             sinksource_chan_to_string(sinksource.chan),
             sinksource_format_to_string(sinksource.format),
@@ -400,22 +401,52 @@ static void create_graph(SourceWriter &src, const SymbolicIR &symbolic_ir,
       src.pop_indentation(2);
     }
   }
-  uint32_t m = compute_graph.connectors.size();
+  // Create connectors
+  const uint32_t m = compute_graph.connectors.size();
   for (uint32_t i = 0; i < m; ++i) {
     const auto &connector = compute_graph.connectors[i];
     if (connector.src_node == external_sential) {
       assert(connector.dst_node != external_sential);
       const uint32_t input_index = connector.src_node_sinksource;
-      src.append(fmt::format("dt_connector_copy(graph, module, {}, {}_id, {});",
-                             input_index, namespaces[connector.dst_node],
-                             connector.dst_node_sinksource));
+      fmt::println("input-index = {}", input_index);
+      const auto &info = compute_graph.input_descriptors[input_index];
+      src.append(fmt::format("if ({}_connector == NULL) {{", info.name));
+      src.push_indentation();
+      src.append(fmt::format(
+          "dt_connector_copy(graph, module, {}_id, {}_id, {});", info.name,
+          namespaces[connector.dst_node], connector.dst_node_sinksource));
+      src.pop_indentation();
+      src.append("} else {");
+      src.push_indentation();
+      src.append(fmt::format(
+          "dt_node_connect_named(graph, {}_id, {}_connector, {}_id, \"{}\");",
+          info.name, info.name, namespaces[connector.dst_node],
+          compute_graph.nodes[connector.dst_node]
+              .sinksources[connector.dst_node_sinksource]
+              .name));
+      src.pop_indentation();
+      src.append("}");
     } else if (connector.dst_node == external_sential) {
-      const uint32_t output_index = connector.dst_node_sinksource;
       assert(connector.src_node != external_sential);
-      src.append(fmt::format("dt_connector_copy(graph, module, {}, {}_id, {});",
-                             dnx->inputs()->size() + output_index,
-                             namespaces[connector.src_node],
-                             connector.src_node_sinksource));
+      const uint32_t output_index = connector.dst_node_sinksource;
+      const auto &info = compute_graph.output_descriptors[output_index];
+      src.append(fmt::format("if ({}_connector == NULL) {{", info.name));
+      src.push_indentation();
+      src.append(fmt::format(
+          "dt_connector_copy(graph, module, {}_id, {}_id, {});", info.name,
+          namespaces[connector.src_node], connector.src_node_sinksource));
+      src.pop_indentation();
+      src.append("} else {");
+      src.push_indentation();
+      src.append(fmt::format(
+          "dt_node_connect_named(graph, {}_id, \"{}\", {}_id, {}_connector);",
+          namespaces[connector.src_node],
+          compute_graph.nodes[connector.src_node]
+              .sinksources[connector.src_node_sinksource]
+              .name,
+          info.name, info.name));
+      src.pop_indentation();
+      src.append("}");
     } else {
 
       assert(connector.src_node != external_sential);
@@ -453,7 +484,7 @@ void vkdt_denox::def_func_denox_create_nodes(
   src.add_include("modules/api.h", IncludeType::Local);
 
   std::string def =
-      "static void denox_create_nodes(dt_graph* graph, dt_module_t* module";
+      "static void denox_create_nodes(dt_graph_t* graph, dt_module_t* module";
   if (symbolic_ir.vars.empty()) {
     def.append(") {");
     src.append(def);
@@ -461,17 +492,37 @@ void vkdt_denox::def_func_denox_create_nodes(
     def.append(",");
     src.append(def);
     src.push_indentation(3);
-    std::string params = "";
+    std::string valueParams = "";
     bool first = true;
     for (const auto &var : symbolic_ir.vars) {
       if (!first) {
-        params.append(", ");
+        valueParams.append(", ");
       }
       first = false;
-      params.append(fmt::format("uint64_t {}", var));
+      valueParams.append(fmt::format("uint64_t {}", var));
     }
-    params.append(") {");
-    src.append(params);
+    valueParams.append(",");
+    src.append(valueParams);
+
+    assert(!compute_graph.input_descriptors.empty());
+    for (const auto &input : compute_graph.input_descriptors) {
+      src.append(fmt::format("int {}_id, const char* {}_connector,", input.name,
+                             input.name));
+    }
+    assert(!compute_graph.output_descriptors.empty());
+    first = true;
+    for (size_t i = 0; i < compute_graph.output_descriptors.size(); ++i) {
+      const auto &output = compute_graph.output_descriptors[i];
+
+      if (i == compute_graph.output_descriptors.size() - 1) {
+        src.append(fmt::format("int {}_id, const char* {}_connector) {{",
+                               output.name, output.name));
+      } else {
+        src.append(fmt::format("int {}_id, const char* {}_connector,",
+                               output.name, output.name));
+      }
+    }
+
     src.pop_indentation(3);
   }
 

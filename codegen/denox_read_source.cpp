@@ -12,7 +12,7 @@ void vkdt_denox::def_func_denox_read_source(
   src.add_include("modules/api.h", IncludeType::Local);
 
   src.append("static int denox_read_source(dt_module_t* mod, void* mapped, "
-             "dt_read_source_param_t* p) {");
+             "dt_read_source_params_t* p) {");
   src.push_indentation();
   bool first = true;
   for (const auto &node : compute_graph.nodes) {
@@ -46,6 +46,7 @@ void vkdt_denox::def_func_denox_read_source(
     src.pop_indentation();
     src.append("}");
 
+    src.append("fseek(f, 0, SEEK_END);");
     src.append("const size_t size = ftell(f);");
     src.append(fmt::format("const size_t expected_size = {};",
                            compressed_weights.data.size()));
