@@ -35,6 +35,8 @@ struct SinkSource {
   SinkSourceChan chan;
   SinkSourceFormat format;
   uint32_t buffer_roi_id;
+  std::variant<Symbol, uint64_t> ssbo_offset;
+  const denox::dnx::TensorInfo* tensor_info;
 };
 
 enum PushConstantType {
@@ -64,6 +66,7 @@ struct ComputeDispatch {
   Symbol workgroup_count_y;
   Symbol workgroup_count_z;
   PushConstants pc;
+  const denox::dnx::DispatchInfo* info;
 };
 
 struct Upload {
@@ -85,7 +88,7 @@ struct Connector {
 };
 
 struct BufferRoi {
-  std::variant<Symbol, size_t> byte_size;
+  std::variant<Symbol, uint64_t> byte_size;
   std::optional<std::pair<Symbol, Symbol>>
       extent; // (width, height) <- in pixel coordinates!
   SinkSourceFormat format;

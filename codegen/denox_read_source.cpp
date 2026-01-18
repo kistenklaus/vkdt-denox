@@ -31,7 +31,7 @@ void vkdt_denox::def_func_denox_read_source(
 
     src.push_indentation();
     src.append(fmt::format(
-        "FILE* f = dt_graph_open_resource(mod->graph, 0, \"{}\", \"r\");",
+        "FILE* f = dt_graph_open_resource(mod->graph, 0, \"{}\", \"rb\");",
         weights_path));
     src.append("if (!f) {");
     src.push_indentation();

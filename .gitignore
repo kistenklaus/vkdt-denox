@@ -57,3 +57,5 @@
 *.pkg
 /src
 /pkg
+
+/tmp

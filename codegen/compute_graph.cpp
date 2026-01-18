@@ -31,6 +31,7 @@ vkdt_denox::ComputeGraph vkdt_denox::reconstruct_compute_graph(
     uint32_t borrowing_node;
     uint32_t sinksource_id;
     uint32_t buffer_roi_id;
+    std::variant<Symbol, uint64_t> ssbo_offset;
   };
   std::vector<BufferLocation> buffer_locations( //
       buffer_count,                             //
@@ -56,11 +57,13 @@ vkdt_denox::ComputeGraph vkdt_denox::reconstruct_compute_graph(
               .sinksource_id = 0,
           },
       .sinksources = {SinkSource{
-          .name = "weights",
+          .name = "w",
           .type = SinkSourceType::Source,
           .chan = SinkSourceChan::SSBO,
           .format = SinkSourceFormat::Byte,
           .buffer_roi_id = weight_buffer_roi_id,
+          .ssbo_offset = size_t(0),
+          .tensor_info = nullptr,
       }},
   });
 
@@ -74,10 +77,12 @@ vkdt_denox::ComputeGraph vkdt_denox::reconstruct_compute_graph(
     buffer_locations[buffer_id].sinksource_id = 0;
     buffer_locations[buffer_id].borrowing_node = none_sentinal;
     buffer_locations[buffer_id].buffer_roi_id = weight_buffer_roi_id;
+    assert(compressed_weights.offsets[tensor_id] >= 0);
+    buffer_locations[buffer_id].ssbo_offset =
+        static_cast<uint64_t>(compressed_weights.offsets[tensor_id]);
   }
 
   // Write rois for input!
-
   for (uint32_t i = 0; i < dnx->inputs()->size(); ++i) {
     const uint32_t tensor_id = dnx->inputs()->Get(i);
     const auto *tensor = dnx->tensors()->Get(tensor_id);
@@ -118,6 +123,8 @@ vkdt_denox::ComputeGraph vkdt_denox::reconstruct_compute_graph(
     buffer_locations[buffer_id].sinksource_id = i;
     buffer_locations[buffer_id].borrowing_node = none_sentinal;
     buffer_locations[buffer_id].buffer_roi_id = input_roi_id;
+    buffer_locations[buffer_id].ssbo_offset =
+        Symbol{tensor->offset_type(), tensor->offset()};
   }
 
   for (uint32_t d = 0; d < dispatch_count; ++d) {
@@ -128,6 +135,7 @@ vkdt_denox::ComputeGraph vkdt_denox::reconstruct_compute_graph(
       uint16_t set;
       uint16_t binding;
       uint8_t access;
+      uint32_t tensor;
       uint32_t buffer;
       Symbol offset;
     };
@@ -147,6 +155,7 @@ vkdt_denox::ComputeGraph vkdt_denox::reconstruct_compute_graph(
             .set = binding->set(),
             .binding = tensor_binding->binding(),
             .access = tensor_binding->access(),
+            .tensor = tensor_id,
             .buffer = buffer_id,
             .offset =
                 Symbol{
@@ -218,7 +227,7 @@ vkdt_denox::ComputeGraph vkdt_denox::reconstruct_compute_graph(
               const uint32_t dummy_roi = graph.dummy_roi.value();
               node_c.dummy_source = node_c.sinksources.size();
               node_c.sinksources.push_back(SinkSource{
-                  .name = "dummy-source",
+                  .name = "dummy",
                   .type = SinkSourceType::Write,
                   .chan = SinkSourceChan::SSBO,
                   .format = SinkSourceFormat::Byte,
@@ -252,6 +261,7 @@ vkdt_denox::ComputeGraph vkdt_denox::reconstruct_compute_graph(
           location.buffer_roi_id = buffer_roi_id;
           location.borrowing_node = none_sentinal;
           location.sinksource_id = sinksource_id;
+          location.ssbo_offset = binding.offset;
           type = SinkSourceType::Write; // <- allocates resource
         }
         assert(location.buffer_roi_id != none_sentinal);
@@ -279,11 +289,12 @@ vkdt_denox::ComputeGraph vkdt_denox::reconstruct_compute_graph(
 
             node_c.dummy_source = node_c.sinksources.size();
             node_c.sinksources.push_back(SinkSource{
-                .name = "dummy-source",
+                .name = "dummy",
                 .type = SinkSourceType::Write,
                 .chan = SinkSourceChan::SSBO,
                 .format = SinkSourceFormat::Byte,
                 .buffer_roi_id = dummy_roi,
+                .ssbo_offset = uint64_t(0),
             });
           }
           const uint32_t dummy_source = node_c.dummy_source.value();
@@ -313,12 +324,21 @@ vkdt_denox::ComputeGraph vkdt_denox::reconstruct_compute_graph(
       SinkSourceChan chan = SinkSourceChan::SSBO;
       // TODO: Set appropriate format and roi for output tensors.
 
-      sinksources.push_back(
-          SinkSource{.name = fmt::format("{}", char('a' + b)),
-                     .type = type,
-                     .chan = chan,
-                     .format = format,
-                     .buffer_roi_id = location.buffer_roi_id});
+      const denox::dnx::TensorInfo *tensor_info = nullptr;
+      const denox::dnx::Tensor *tensor = dnx->tensors()->Get(binding.tensor);
+      if (tensor != nullptr && tensor->info() != nullptr) {
+        tensor_info = tensor->info();
+      }
+
+      sinksources.push_back(SinkSource{
+          .name = fmt::format("{}", char('a' + b)),
+          .type = type,
+          .chan = chan,
+          .format = format,
+          .buffer_roi_id = location.buffer_roi_id,
+          .ssbo_offset = location.ssbo_offset,
+          .tensor_info = tensor_info,
+      });
     }
 
     uint32_t dummy_sink_count = dummy_sink_id - bindings.size();
@@ -334,17 +354,19 @@ vkdt_denox::ComputeGraph vkdt_denox::reconstruct_compute_graph(
     for (uint32_t i = 0; i < dummy_sink_count; ++i) {
 
       sinksources.push_back(SinkSource{
-          .name = fmt::format("dummy-sink-{}", i),
+          .name = fmt::format("z{}", i),
           .type = SinkSourceType::Read,
           .chan = SinkSourceChan::SSBO,
           .format = SinkSourceFormat::Byte,
           .buffer_roi_id = graph.dummy_roi.value(),
+          .ssbo_offset = size_t(0),
       });
     }
 
     Node node;
     node.sinksources = std::move(sinksources);
     ComputeDispatch node_compute_dispatch;
+    node_compute_dispatch.info = compute_dispatch->info();
     if (compute_dispatch->info() && compute_dispatch->info()->name()) {
       std::string name = compute_dispatch->info()->name()->str();
       std::replace(name.begin(), name.end(), '-', '_');
@@ -360,7 +382,7 @@ vkdt_denox::ComputeGraph vkdt_denox::reconstruct_compute_graph(
 
       node_compute_dispatch.name = name;
     } else {
-      node_compute_dispatch.name = fmt::format("n{}", d);
+      node_compute_dispatch.name = fmt::format("unnamed_dispatch_{}", d);
     }
 
     node_compute_dispatch.binary_id = compute_dispatch->binary_id();

@@ -2,6 +2,7 @@
 #include "compute_graph.hpp"
 #include "symbolics.hpp"
 #include <dnx.h>
+#include <filesystem>
 #include <fmt/base.h>
 #include <stdexcept>
 #include <variant>
@@ -70,9 +71,9 @@ static void eval_symbolics(SourceWriter &src, const SymbolicIR &ir,
       expr = fmt::format("{} < {} ? {} : {}", lhs, rhs, rhs, lhs);
     }
 
-    std::string symbol_name = fmt::format("s{}", sid);
+    std::string symbol_name = fmt::format("r{}", sid);
     symbol_names[sid] = symbol_name;
-    expressions[i] = fmt::format("int64_t {} = {};", symbol_name, expr);
+    expressions[i] = fmt::format("const int64_t {} = {};", symbol_name, expr);
   }
 
   std::vector<bool> pruned_expressions(m, false);
@@ -139,7 +140,7 @@ static std::string access_symbol(const SymbolicIR &ir,
     if (sid < ir.vars.size()) {
       return ir.vars[sid];
     } else {
-      return fmt::format("s{}", sym_ref->sid());
+      return fmt::format("r{}", sym_ref->sid());
     }
   } else if (symbol.type == denox::dnx::ScalarSource_literal) {
     return fmt::format(
@@ -256,6 +257,21 @@ static void create_graph(SourceWriter &src, const SymbolicIR &symbolic_ir,
 
     if (std::holds_alternative<ComputeDispatch>(node.op)) {
       const auto &compute_dispatch = std::get<ComputeDispatch>(node.op);
+
+      if (compute_dispatch.info != nullptr) {
+        const denox::dnx::DispatchInfo *info = compute_dispatch.info;
+        if (info->src_path() != nullptr) {
+          std::filesystem::path path = info->src_path()->str();
+          std::string filename = path.filename();
+          src.append(
+              fmt::format("// {} ({})", compute_dispatch.name, filename));
+        } else {
+          src.append(fmt::format("// {}", compute_dispatch.name));
+        }
+      } else {
+        src.append(fmt::format("// {}", compute_dispatch.name));
+      }
+
       std::string node_namespace = compute_dispatch.name;
       namespaces[nid] = node_namespace;
       // === Create push constant ====
@@ -347,11 +363,11 @@ static void create_graph(SourceWriter &src, const SymbolicIR &symbolic_ir,
                         referenced_symbols)));
 
       if (compute_dispatch.pc.size != 0) {
-        src.append(fmt::format("{}, (const int*){}_pc, {},",
+        src.append(fmt::format("{}, (const int*){}_pc, {}, //",
                                compute_dispatch.pc.size, node_namespace,
                                node.sinksources.size()));
       } else {
-        src.append(fmt::format("0, NULL, {},", node.sinksources.size()));
+        src.append(fmt::format("0, NULL, {}, //", node.sinksources.size()));
       }
 
       assert(!node.sinksources.empty());
@@ -369,10 +385,118 @@ static void create_graph(SourceWriter &src, const SymbolicIR &symbolic_ir,
         } else {
           sinksource_desc.push_back(',');
         }
+        if (sinksource.tensor_info != nullptr) {
+          const auto *info = sinksource.tensor_info;
+          bool emitDebug = true;
+          std::string type_str = "";
+          switch (info->type()) {
+          case denox::dnx::ScalarType_I16:
+            type_str = "i16";
+            break;
+          case denox::dnx::ScalarType_U16:
+            type_str = "u16";
+            break;
+          case denox::dnx::ScalarType_I32:
+            type_str = "i32";
+            break;
+          case denox::dnx::ScalarType_U32:
+            type_str = "u32";
+            break;
+          case denox::dnx::ScalarType_I64:
+            type_str = "i64";
+            break;
+          case denox::dnx::ScalarType_U64:
+            type_str = "u64";
+            break;
+          case denox::dnx::ScalarType_F16:
+            type_str = "f16";
+            break;
+          case denox::dnx::ScalarType_F32:
+            type_str = "f32";
+            break;
+          case denox::dnx::ScalarType_F64:
+            type_str = "f64";
+            break;
+          default:
+            emitDebug = false;
+            break;
+          }
+          std::string format_str = "";
+          switch (info->format()) {
+          case denox::dnx::TensorFormat_UNKNOWN:
+            format_str = "<UNKNOWN>";
+            emitDebug = false;
+            break;
+          case denox::dnx::TensorFormat_SSBO_HWC:
+            format_str = "HWC";
+            break;
+          case denox::dnx::TensorFormat_SSBO_CHW:
+            format_str = "CHW";
+            break;
+          case denox::dnx::TensorFormat_SSBO_CHWC8:
+            format_str = "CHWC8";
+            break;
+          case denox::dnx::TensorFormat_TEX_RGBA:
+            format_str = "RGBA";
+            break;
+          case denox::dnx::TensorFormat_TEX_RGB:
+            format_str = "RGB";
+            break;
+          case denox::dnx::TensorFormat_TEX_RG:
+            format_str = "RG";
+            break;
+          case denox::dnx::TensorFormat_TEX_R:
+            format_str = "R";
+            break;
+          default:
+            emitDebug = false;
+            break;
+          }
+          if (emitDebug) {
+            sinksource_desc.append(fmt::format(
+                " // {}[{}] : {}", format_str,
+                access_symbol(symbolic_ir,
+                              Symbol{info->channels_type(), info->channels()},
+                              referenced_symbols),
+                type_str));
+          } else {
+            sinksource_desc.append("// unknown");
+          }
+        } else {
+          sinksource_desc.append("//");
+        }
         src.append(sinksource_desc);
       }
-
       src.pop_indentation(2);
+
+      for (uint32_t i = 0; i < node.sinksources.size(); ++i) {
+        const SinkSource &sinksource = node.sinksources[i];
+        if (std::holds_alternative<uint64_t>(sinksource.ssbo_offset)) {
+          uint64_t offset = std::get<uint64_t>(sinksource.ssbo_offset);
+          if (offset == 0) {
+            continue;
+          }
+          src.append(
+              fmt::format("graph->node[{}_id]->connector[{}].ssbo_offset = {};",
+                          node_namespace, i, offset));
+        } else if (std::holds_alternative<Symbol>(sinksource.ssbo_offset)) {
+          Symbol offset = std::get<Symbol>(sinksource.ssbo_offset);
+          if (offset.type == denox::dnx::ScalarSource_literal) {
+            uint64_t o = read_unsigned_scalar_literal(
+                static_cast<const denox::dnx::ScalarLiteral *>(offset.ptr));
+            if (o == 0) {
+              continue;
+            }
+          }
+          src.append(fmt::format(
+              "graph->node[{}_id]->connector[{}].ssbo_offset = {};",
+              node_namespace, i,
+              access_symbol(symbolic_ir, offset, referenced_symbols)));
+        } else {
+          throw std::runtime_error("unreachable");
+        }
+      }
+
     } else if (std::holds_alternative<Upload>(node.op)) {
       const auto &upload = std::get<Upload>(node.op);
       namespaces[nid] = upload.name;
@@ -408,7 +532,6 @@ static void create_graph(SourceWriter &src, const SymbolicIR &symbolic_ir,
     if (connector.src_node == external_sential) {
       assert(connector.dst_node != external_sential);
       const uint32_t input_index = connector.src_node_sinksource;
-      fmt::println("input-index = {}", input_index);
       const auto &info = compute_graph.input_descriptors[input_index];
       src.append(fmt::format("if ({}_connector == NULL) {{", info.name));
       src.push_indentation();

@@ -23,6 +23,7 @@ int main(int argc, char **argv) {
   std::string src_dir_str;
   std::string shader_dir_str;
   std::string weight_dir_str;
+  std::string bin_dir_str;
   std::string module_name;
   bool mkdir = false;
 
@@ -43,6 +44,8 @@ int main(int argc, char **argv) {
                  "Output directory for neural network weights")
       ->required();
 
+  app.add_option("--bin-dir", bin_dir_str, "vkdt binary directory");
+
   app.add_option("--module-name", module_name, "Name of the vkdt module")
       ->required();
 
@@ -59,6 +62,7 @@ int main(int argc, char **argv) {
   const fs::path src_dir{src_dir_str};
   const fs::path shader_dir{shader_dir_str};
   const fs::path weight_dir{weight_dir_str};
+  const fs::path bin_dir{bin_dir_str};
 
   if (!fs::exists(dnx_path) || !fs::is_regular_file(dnx_path)) {
     std::cerr << "Error: DNX artifact does not exist or is not a regular file: "
@@ -94,7 +98,8 @@ int main(int argc, char **argv) {
 
   if (!check_output_dir(src_dir_str, "src-dir") ||
       !check_output_dir(shader_dir_str, "shader-dir") ||
-      !check_output_dir(weight_dir_str, "weight-dir")) {
+      !check_output_dir(weight_dir_str, "weight-dir") ||
+      !check_output_dir(bin_dir_str, "bin-dir")) {
     return 1;
   }
 
@@ -115,6 +120,9 @@ int main(int argc, char **argv) {
   fs::path weight_path =
       weight_dir / fmt::format("{}-weights.dat", module_name);
   std::string weight_path_str = weight_path.string();
+  std::string rel_weight_path_str = fs::relative(weight_path, bin_dir).string();
+  fmt::println("relative-path: {}", rel_weight_path_str);
+
   vkdt_denox::write_file_bytes(weight_path_str, compressed_weights.data.data(),
                                compressed_weights.data.size());
 
@@ -128,7 +136,7 @@ int main(int argc, char **argv) {
   src.add_header_guard(fmt::format("{}_DENOX_MODULE_H", module_name));
   src.append("\n");
   vkdt_denox::def_func_denox_read_source(src, compute_graph, compressed_weights,
-                                         weight_path_str, module_name);
+                                         rel_weight_path_str, module_name);
 
   src.append("\n");
   vkdt_denox::def_func_denox_create_nodes(src, dnx, symbolic_ir,
