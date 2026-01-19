@@ -1,11 +1,11 @@
 #include "compute_graph.hpp"
 #include "compress_weights.hpp"
+#include "symbolics.hpp"
 #include <algorithm>
 #include <dnx.h>
 #include <fmt/base.h>
 #include <fmt/format.h>
 #include <stdexcept>
-#include <unordered_set>
 
 static size_t sizeof_format(vkdt_denox::SinkSourceFormat format) {
   switch (format) {
@@ -31,7 +31,7 @@ vkdt_denox::ComputeGraph vkdt_denox::reconstruct_compute_graph(
     uint32_t borrowing_node;
     uint32_t sinksource_id;
     uint32_t buffer_roi_id;
-    std::variant<Symbol, uint64_t> ssbo_offset;
+    uint64_t buffer_ssbo_offset;
   };
   std::vector<BufferLocation> buffer_locations( //
       buffer_count,                             //
@@ -40,6 +40,7 @@ vkdt_denox::ComputeGraph vkdt_denox::reconstruct_compute_graph(
           .borrowing_node = none_sentinal,
           .sinksource_id = 0,
           .buffer_roi_id = none_sentinal,
+          .buffer_ssbo_offset = 0,
       });
 
   // Create weight node.
@@ -62,7 +63,8 @@ vkdt_denox::ComputeGraph vkdt_denox::reconstruct_compute_graph(
           .chan = SinkSourceChan::SSBO,
           .format = SinkSourceFormat::Byte,
           .buffer_roi_id = weight_buffer_roi_id,
-          .ssbo_offset = size_t(0),
+          .buffer_ssbo_offset = size_t(0),
+          .tensor_offset = std::nullopt,
           .tensor_info = nullptr,
       }},
   });
@@ -78,7 +80,7 @@ vkdt_denox::ComputeGraph vkdt_denox::reconstruct_compute_graph(
     buffer_locations[buffer_id].borrowing_node = none_sentinal;
     buffer_locations[buffer_id].buffer_roi_id = weight_buffer_roi_id;
     assert(compressed_weights.offsets[tensor_id] >= 0);
-    buffer_locations[buffer_id].ssbo_offset =
+    buffer_locations[buffer_id].buffer_ssbo_offset =
         static_cast<uint64_t>(compressed_weights.offsets[tensor_id]);
   }
 
@@ -123,8 +125,9 @@ vkdt_denox::ComputeGraph vkdt_denox::reconstruct_compute_graph(
     buffer_locations[buffer_id].sinksource_id = i;
     buffer_locations[buffer_id].borrowing_node = none_sentinal;
     buffer_locations[buffer_id].buffer_roi_id = input_roi_id;
-    buffer_locations[buffer_id].ssbo_offset =
-        Symbol{tensor->offset_type(), tensor->offset()};
+    assert(tensor->offset_type() == denox::dnx::ScalarSource_literal);
+    assert(read_unsigned_scalar_literal(tensor->offset_as_literal()) == 0);
+    buffer_locations[buffer_id].buffer_ssbo_offset = 0;
   }
 
   for (uint32_t d = 0; d < dispatch_count; ++d) {
@@ -232,6 +235,9 @@ vkdt_denox::ComputeGraph vkdt_denox::reconstruct_compute_graph(
                   .chan = SinkSourceChan::SSBO,
                   .format = SinkSourceFormat::Byte,
                   .buffer_roi_id = dummy_roi,
+                  .buffer_ssbo_offset = 0,
+                  .tensor_offset = std::nullopt,
+                  .tensor_info = nullptr,
               });
             }
             const uint32_t dummy_source = node_c.dummy_source.value();
@@ -261,7 +267,6 @@ vkdt_denox::ComputeGraph vkdt_denox::reconstruct_compute_graph(
           location.buffer_roi_id = buffer_roi_id;
           location.borrowing_node = none_sentinal;
           location.sinksource_id = sinksource_id;
-          location.ssbo_offset = binding.offset;
           type = SinkSourceType::Write; // <- allocates resource
         }
         assert(location.buffer_roi_id != none_sentinal);
@@ -294,7 +299,9 @@ vkdt_denox::ComputeGraph vkdt_denox::reconstruct_compute_graph(
                 .chan = SinkSourceChan::SSBO,
                 .format = SinkSourceFormat::Byte,
                 .buffer_roi_id = dummy_roi,
-                .ssbo_offset = uint64_t(0),
+                .buffer_ssbo_offset = 0,
+                .tensor_offset = std::nullopt,
+                .tensor_info = nullptr,
             });
           }
           const uint32_t dummy_source = node_c.dummy_source.value();
@@ -336,7 +343,8 @@ vkdt_denox::ComputeGraph vkdt_denox::reconstruct_compute_graph(
           .chan = chan,
           .format = format,
           .buffer_roi_id = location.buffer_roi_id,
-          .ssbo_offset = location.ssbo_offset,
+          .buffer_ssbo_offset = location.buffer_ssbo_offset,
+          .tensor_offset = Symbol{tensor->offset_type(), tensor->offset()},
           .tensor_info = tensor_info,
       });
     }
@@ -359,7 +367,9 @@ vkdt_denox::ComputeGraph vkdt_denox::reconstruct_compute_graph(
           .chan = SinkSourceChan::SSBO,
           .format = SinkSourceFormat::Byte,
           .buffer_roi_id = graph.dummy_roi.value(),
-          .ssbo_offset = size_t(0),
+          .buffer_ssbo_offset = 0,
+          .tensor_offset = std::nullopt,
+          .tensor_info = nullptr,
       });
     }
 

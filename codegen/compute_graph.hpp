@@ -35,7 +35,8 @@ struct SinkSource {
   SinkSourceChan chan;
   SinkSourceFormat format;
   uint32_t buffer_roi_id;
-  std::variant<Symbol, uint64_t> ssbo_offset;
+  uint64_t buffer_ssbo_offset;
+  std::optional<Symbol> tensor_offset;
   const denox::dnx::TensorInfo* tensor_info;
 };
 

@@ -249,6 +249,7 @@ static void create_graph(SourceWriter &src, const SymbolicIR &symbolic_ir,
                          const denox::dnx::Model *dnx,
                          std::vector<bool> &referenced_symbols,
                          std::string_view module_name) {
+  SourceWriter offset_src;
 
   const uint32_t n = compute_graph.nodes.size();
   std::vector<std::string> namespaces(n);
@@ -471,32 +472,42 @@ static void create_graph(SourceWriter &src, const SymbolicIR &symbolic_ir,
 
       for (uint32_t i = 0; i < node.sinksources.size(); ++i) {
         const SinkSource &sinksource = node.sinksources[i];
-        if (std::holds_alternative<uint64_t>(sinksource.ssbo_offset)) {
-          uint64_t offset = std::get<uint64_t>(sinksource.ssbo_offset);
-          if (offset == 0) {
-            continue;
-          }
-          src.append(
-              fmt::format("graph->node[{}_id]->connector[{}].ssbo_offset = {};",
-                          node_namespace, i, offset));
-        } else if (std::holds_alternative<Symbol>(sinksource.ssbo_offset)) {
-          Symbol offset = std::get<Symbol>(sinksource.ssbo_offset);
-          if (offset.type == denox::dnx::ScalarSource_literal) {
-            uint64_t o = read_unsigned_scalar_literal(
-                static_cast<const denox::dnx::ScalarLiteral *>(offset.ptr));
-            if (o == 0) {
-              continue;
+
+        if (sinksource.tensor_offset.has_value()) {
+          if (sinksource.tensor_offset->type ==
+              denox::dnx::ScalarSource_literal) {
+            uint64_t offset =
+                read_unsigned_scalar_literal(
+                    static_cast<const denox::dnx::ScalarLiteral *>(
+                        sinksource.tensor_offset->ptr)) +
+                sinksource.buffer_ssbo_offset;
+            offset_src.append(fmt::format(
+                "graph->node[{}_id]->connector[{}].ssbo_offset = {};",
+                node_namespace, i, sinksource.buffer_ssbo_offset));
+          } else {
+            if (sinksource.buffer_ssbo_offset != 0) {
+              offset_src.append(fmt::format(
+                  "graph->node[{}_id]->connector[{}].ssbo_offset = {};",
+                  node_namespace, i,
+                  access_symbol(symbolic_ir, *sinksource.tensor_offset,
+                                referenced_symbols)));
+            } else {
+              offset_src.append(fmt::format(
+                  "graph->node[{}_id]->connector[{}].ssbo_offset = {} + {};",
+                  node_namespace, i,
+                  access_symbol(symbolic_ir, *sinksource.tensor_offset,
+                                referenced_symbols),
+                  sinksource.buffer_ssbo_offset));
             }
           }
-          src.append(fmt::format(
-              "graph->node[{}_id]->connector[{}].ssbo_offset = {};",
-              node_namespace, i,
-              access_symbol(symbolic_ir, offset, referenced_symbols)));
         } else {
-          throw std::runtime_error("unreachable");
+          if (sinksource.buffer_ssbo_offset != 0) {
+            offset_src.append(fmt::format(
+                "graph->node[{}_id]->connector[{}].ssbo_offset = {};",
+                node_namespace, i, sinksource.buffer_ssbo_offset));
+          }
         }
       }
-
     } else if (std::holds_alternative<Upload>(node.op)) {
       const auto &upload = std::get<Upload>(node.op);
       namespaces[nid] = upload.name;
@@ -592,6 +603,7 @@ static void create_graph(SourceWriter &src, const SymbolicIR &symbolic_ir,
               .name));
     }
   }
+  src.append(offset_src.finish());
 }
 
 } // namespace vkdt_denox
