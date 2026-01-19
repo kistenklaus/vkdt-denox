@@ -482,18 +482,18 @@ static void create_graph(SourceWriter &src, const SymbolicIR &symbolic_ir,
                         sinksource.tensor_offset->ptr)) +
                 sinksource.buffer_ssbo_offset;
             offset_src.append(fmt::format(
-                "graph->node[{}_id]->connector[{}].ssbo_offset = {};",
+                "graph->node[{}_id].connector[{}].ssbo_offset = {};",
                 node_namespace, i, sinksource.buffer_ssbo_offset));
           } else {
             if (sinksource.buffer_ssbo_offset != 0) {
               offset_src.append(fmt::format(
-                  "graph->node[{}_id]->connector[{}].ssbo_offset = {};",
+                  "graph->node[{}_id].connector[{}].ssbo_offset = {};",
                   node_namespace, i,
                   access_symbol(symbolic_ir, *sinksource.tensor_offset,
                                 referenced_symbols)));
             } else {
               offset_src.append(fmt::format(
-                  "graph->node[{}_id]->connector[{}].ssbo_offset = {} + {};",
+                  "graph->node[{}_id].connector[{}].ssbo_offset = {} + {};",
                   node_namespace, i,
                   access_symbol(symbolic_ir, *sinksource.tensor_offset,
                                 referenced_symbols),
@@ -503,7 +503,7 @@ static void create_graph(SourceWriter &src, const SymbolicIR &symbolic_ir,
         } else {
           if (sinksource.buffer_ssbo_offset != 0) {
             offset_src.append(fmt::format(
-                "graph->node[{}_id]->connector[{}].ssbo_offset = {};",
+                "graph->node[{}_id].connector[{}].ssbo_offset = {};",
                 node_namespace, i, sinksource.buffer_ssbo_offset));
           }
         }
