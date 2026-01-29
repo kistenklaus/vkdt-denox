@@ -41,7 +41,6 @@ void vkdt_denox::def_func_denox_read_source(
     src.append(fmt::format("\"{}: could not find \\\"{}\\\"\");", module_name,
                            weights_path));
     src.pop_indentation(3);
-    src.append("fclose(f);");
     src.append("return 1;");
     src.pop_indentation();
     src.append("}");
