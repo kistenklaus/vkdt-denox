@@ -474,6 +474,14 @@ static void create_graph(SourceWriter &src, const SymbolicIR &symbolic_ir,
       for (uint32_t i = 0; i < node.sinksources.size(); ++i) {
         const SinkSource &sinksource = node.sinksources[i];
 
+#if 0
+        // try to clear write outputs, doesn't change anything
+        if(sinksource.type == vkdt_denox::SinkSourceType::Write)
+            offset_src.append(fmt::format(
+                "graph->node[{}_id].connector[{}].flags |= s_conn_clear;",
+                node_namespace, i));
+#endif
+
         if (sinksource.tensor_offset.has_value()) {
           if (sinksource.tensor_offset->type ==
               denox::dnx::ScalarSource_literal) {
