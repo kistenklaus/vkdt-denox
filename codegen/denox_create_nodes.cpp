@@ -374,6 +374,7 @@ static void create_graph(SourceWriter &src, const SymbolicIR &symbolic_ir,
       assert(!node.sinksources.empty());
       for (uint32_t i = 0; i < node.sinksources.size(); ++i) {
         const auto &sinksource = node.sinksources[i];
+        // FIXME should be dt_no_roi for "read" type of connectors
         std::string sinksource_desc = fmt::format(
             "\"{}\", \"{}\", \"{}\", \"{}\", &roi{}", sinksource.name,
             sinksource_type_to_string(sinksource.type),
