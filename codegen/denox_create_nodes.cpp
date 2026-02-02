@@ -490,11 +490,12 @@ static void create_graph(SourceWriter &src, const SymbolicIR &symbolic_ir,
                     static_cast<const denox::dnx::ScalarLiteral *>(
                         sinksource.tensor_offset->ptr)) +
                 sinksource.buffer_ssbo_offset;
-            offset_src.append(fmt::format(
-                "graph->node[{}_id].connector[{}].ssbo_offset = {};",
-                node_namespace, i, sinksource.buffer_ssbo_offset));
+            if(offset)
+              offset_src.append(fmt::format(
+                    "graph->node[{}_id].connector[{}].ssbo_offset = {};",
+                    node_namespace, i, sinksource.buffer_ssbo_offset));
           } else {
-            if (sinksource.buffer_ssbo_offset != 0) {
+            if (sinksource.buffer_ssbo_offset == 0) {
               offset_src.append(fmt::format(
                   "graph->node[{}_id].connector[{}].ssbo_offset = {};",
                   node_namespace, i,
