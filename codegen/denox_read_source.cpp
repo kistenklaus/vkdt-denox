@@ -6,12 +6,13 @@
 void vkdt_denox::def_func_denox_read_source(
     SourceWriter &src, const ComputeGraph &compute_graph,
     const CompressedWeights &compressed_weights, std::string_view weights_path,
-    std::string_view module_name) {
+    std::string_view module_name,
+    std::string &basename) {
   src.add_include("stdint.h", IncludeType::System);
   src.add_include("stdio.h", IncludeType::System);
   src.add_include("modules/api.h", IncludeType::Local);
 
-  src.append("static int denox_read_source(dt_module_t* mod, void* mapped, "
+  src.append("static int denox_read_source_"+basename+"(dt_module_t* mod, void* mapped, "
              "dt_read_source_params_t* p) {");
   src.push_indentation();
   bool first = true;

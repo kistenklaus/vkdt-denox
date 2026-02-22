@@ -2,7 +2,7 @@
 #include <fmt/format.h>
 
 vkdt_denox::ShaderRegistry
-vkdt_denox::create_shader_registry(const denox::dnx::Model *dnx) {
+vkdt_denox::create_shader_registry(const denox::dnx::Model *dnx, std::string &basename) {
 
   const uint32_t binary_count = dnx->shader_binaries()->size();
 
@@ -11,7 +11,7 @@ vkdt_denox::create_shader_registry(const denox::dnx::Model *dnx) {
 
   for (uint32_t i = 0; i < binary_count; ++i) {
     const auto *binary = dnx->shader_binaries()->Get(i);
-    registry.binaries[i].name = fmt::format("comp{}", i);
+    registry.binaries[i].name = fmt::format("{}{}", basename, i);
     registry.binaries[i].spv = std::span<const uint32_t>{
         binary->spirv()->data(), binary->spirv()->size()};
   }

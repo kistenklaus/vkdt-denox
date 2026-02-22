@@ -622,14 +622,15 @@ void vkdt_denox::def_func_denox_create_nodes(
     SourceWriter &src, const denox::dnx::Model *dnx,
     const SymbolicIR &symbolic_ir, const ShaderRegistry &shader_registery,
     const CompressedWeights &compresed_weights,
-    const ComputeGraph &compute_graph, const std::string_view module_name) {
+    const ComputeGraph &compute_graph,
+    const std::string_view module_name,
+    const std::string &basename) {
   src.add_include("stdint.h", IncludeType::System);
   src.add_include("string.h", IncludeType::System);
   src.add_include("stddef.h", IncludeType::System);
   src.add_include("modules/api.h", IncludeType::Local);
 
-  std::string def =
-      "static void denox_create_nodes(dt_graph_t* graph, dt_module_t* module";
+  std::string def = fmt::format("static void denox_create_nodes_{}(dt_graph_t* graph, dt_module_t* module", basename);
   if (symbolic_ir.vars.empty()) {
     def.append(") {");
     src.append(def);
