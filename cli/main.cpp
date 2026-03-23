@@ -25,6 +25,7 @@ int main(int argc, char **argv) {
   std::string weight_dir_str;
   std::string bin_dir_str;
   std::string module_name;
+  std::string basename;
   bool mkdir = false;
 
   // Positional: DNX artifact
@@ -46,6 +47,7 @@ int main(int argc, char **argv) {
 
   app.add_option("--bin-dir", bin_dir_str, "vkdt binary directory");
 
+  app.add_option("--basename", basename, "base/variant name of the network");
   app.add_option("--module-name", module_name, "Name of the vkdt module")
       ->required();
 
@@ -113,12 +115,12 @@ int main(int argc, char **argv) {
   vkdt_denox::CompressedWeights compressed_weights =
       vkdt_denox::compress_weights(dnx);
   vkdt_denox::ShaderRegistry shader_registry =
-      vkdt_denox::create_shader_registry(dnx);
+      vkdt_denox::create_shader_registry(dnx, basename);
   vkdt_denox::ComputeGraph compute_graph =
       vkdt_denox::reconstruct_compute_graph(dnx, compressed_weights);
 
   fs::path weight_path =
-      weight_dir / fmt::format("{}-weights.dat", module_name);
+      weight_dir / fmt::format("{}-{}.dat", module_name, basename);
   std::string weight_path_str = weight_path.string();
   std::string rel_weight_path_str = fs::relative(weight_path, bin_dir).string();
   fmt::println("relative-path: {}", rel_weight_path_str);
@@ -133,18 +135,18 @@ int main(int argc, char **argv) {
   }
 
   vkdt_denox::SourceWriter src;
-  src.add_header_guard(fmt::format("{}_DENOX_MODULE_H", module_name));
+  src.add_header_guard(fmt::format("{}_{}_DENOX_MODULE_H", module_name, basename));
   src.append("\n");
   vkdt_denox::def_func_denox_read_source(src, compute_graph, compressed_weights,
-                                         rel_weight_path_str, module_name);
+                                         rel_weight_path_str, module_name, basename);
 
   src.append("\n");
   vkdt_denox::def_func_denox_create_nodes(src, dnx, symbolic_ir,
                                           shader_registry, compressed_weights,
-                                          compute_graph, module_name);
+                                          compute_graph, module_name, basename);
   src.append("\n");
 
-  fs::path src_path = src_dir / "denox_model.h";
+  fs::path src_path = src_dir / ("denox_" + basename + ".h");
   vkdt_denox::write_file(src_path, src.finish());
   return 0;
 }

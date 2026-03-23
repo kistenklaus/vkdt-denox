@@ -16,6 +16,6 @@ struct ShaderRegistry {
   std::vector<ShaderBinary> binaries;
 };
 
-ShaderRegistry create_shader_registry(const denox::dnx::Model *dnx);
+ShaderRegistry create_shader_registry(const denox::dnx::Model *dnx, std::string &basename);
 
 } // namespace vkdt_denox

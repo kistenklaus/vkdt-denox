@@ -13,6 +13,7 @@ void def_func_denox_create_nodes(SourceWriter &src, const denox::dnx::Model *dnx
                           const ShaderRegistry &shader_registery,
                           const CompressedWeights &compresed_weights,
                           const ComputeGraph &compute_graph,
-                          const std::string_view module_name);
+                          const std::string_view module_name,
+                          const std::string &basename);
 
 } // namespace vkdt_denox

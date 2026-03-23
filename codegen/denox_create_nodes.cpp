@@ -374,6 +374,7 @@ static void create_graph(SourceWriter &src, const SymbolicIR &symbolic_ir,
       assert(!node.sinksources.empty());
       for (uint32_t i = 0; i < node.sinksources.size(); ++i) {
         const auto &sinksource = node.sinksources[i];
+        // FIXME should be dt_no_roi for "read" type of connectors
         std::string sinksource_desc = fmt::format(
             "\"{}\", \"{}\", \"{}\", \"{}\", &roi{}", sinksource.name,
             sinksource_type_to_string(sinksource.type),
@@ -473,6 +474,14 @@ static void create_graph(SourceWriter &src, const SymbolicIR &symbolic_ir,
       for (uint32_t i = 0; i < node.sinksources.size(); ++i) {
         const SinkSource &sinksource = node.sinksources[i];
 
+#if 0
+        // try to clear write outputs, doesn't change anything
+        if(sinksource.type == vkdt_denox::SinkSourceType::Write)
+            offset_src.append(fmt::format(
+                "graph->node[{}_id].connector[{}].flags |= s_conn_clear;",
+                node_namespace, i));
+#endif
+
         if (sinksource.tensor_offset.has_value()) {
           if (sinksource.tensor_offset->type ==
               denox::dnx::ScalarSource_literal) {
@@ -481,11 +490,12 @@ static void create_graph(SourceWriter &src, const SymbolicIR &symbolic_ir,
                     static_cast<const denox::dnx::ScalarLiteral *>(
                         sinksource.tensor_offset->ptr)) +
                 sinksource.buffer_ssbo_offset;
-            offset_src.append(fmt::format(
-                "graph->node[{}_id].connector[{}].ssbo_offset = {};",
-                node_namespace, i, sinksource.buffer_ssbo_offset));
+            if(offset)
+              offset_src.append(fmt::format(
+                    "graph->node[{}_id].connector[{}].ssbo_offset = {};",
+                    node_namespace, i, sinksource.buffer_ssbo_offset));
           } else {
-            if (sinksource.buffer_ssbo_offset != 0) {
+            if (sinksource.buffer_ssbo_offset == 0) {
               offset_src.append(fmt::format(
                   "graph->node[{}_id].connector[{}].ssbo_offset = {};",
                   node_namespace, i,
@@ -612,14 +622,15 @@ void vkdt_denox::def_func_denox_create_nodes(
     SourceWriter &src, const denox::dnx::Model *dnx,
     const SymbolicIR &symbolic_ir, const ShaderRegistry &shader_registery,
     const CompressedWeights &compresed_weights,
-    const ComputeGraph &compute_graph, const std::string_view module_name) {
+    const ComputeGraph &compute_graph,
+    const std::string_view module_name,
+    const std::string &basename) {
   src.add_include("stdint.h", IncludeType::System);
   src.add_include("string.h", IncludeType::System);
   src.add_include("stddef.h", IncludeType::System);
   src.add_include("modules/api.h", IncludeType::Local);
 
-  std::string def =
-      "static void denox_create_nodes(dt_graph_t* graph, dt_module_t* module";
+  std::string def = fmt::format("static void denox_create_nodes_{}(dt_graph_t* graph, dt_module_t* module", basename);
   if (symbolic_ir.vars.empty()) {
     def.append(") {");
     src.append(def);

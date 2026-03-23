@@ -11,8 +11,9 @@
 #include <filesystem>
 #include <fmt/format.h>
 
-int main() {
-
+int main()
+{
+  std::string basename = "comp";
   // Read dnx file from disk.
   std::string dnx_path = "./net.dnx";
   std::vector<uint8_t> dnx_buffer = vkdt_denox::read_file_bytes(dnx_path);
@@ -24,7 +25,7 @@ int main() {
   vkdt_denox::CompressedWeights compressed_weights =
       vkdt_denox::compress_weights(dnx);
   vkdt_denox::ShaderRegistry shader_registry =
-      vkdt_denox::create_shader_registry(dnx);
+      vkdt_denox::create_shader_registry(dnx, basename);
   vkdt_denox::ComputeGraph compute_graph =
       vkdt_denox::reconstruct_compute_graph(dnx, compressed_weights);
 
@@ -50,17 +51,17 @@ int main() {
 
   std::string weights_path_str = weights_path.string();
   vkdt_denox::SourceWriter src;
-  src.add_header_guard(fmt::format("{}_CREATE_DNX_NODES_H", module_name));
+  src.add_header_guard(fmt::format("{}_{}_CREATE_DNX_NODES_H", basename, module_name));
 
   src.append("\n");
   vkdt_denox::def_func_denox_read_source(src, compute_graph, compressed_weights,
-                                         weights_path_str, module_name);
+                                         weights_path_str, module_name, basename);
 
   src.append("\n");
   vkdt_denox::def_func_denox_create_nodes(src, dnx, symbolic_ir,
-  shader_registry,
-                                        compressed_weights, compute_graph,
-                                        module_name);
+      shader_registry,
+      compressed_weights, compute_graph,
+      module_name, basename);
   src.append("\n");
 
   vkdt_denox::write_file(module_dir / "denox_model.h", src.finish());
