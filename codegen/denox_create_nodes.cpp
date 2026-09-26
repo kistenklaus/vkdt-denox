@@ -630,14 +630,11 @@ void vkdt_denox::def_func_denox_create_nodes(
   src.add_include("stddef.h", IncludeType::System);
   src.add_include("modules/api.h", IncludeType::Local);
 
-  std::string def = fmt::format("static void denox_create_nodes_{}(dt_graph_t* graph, dt_module_t* module", basename);
-  if (symbolic_ir.vars.empty()) {
-    def.append(") {");
-    src.append(def);
-  } else {
-    def.append(",");
-    src.append(def);
-    src.push_indentation(3);
+  src.append(fmt::format(
+      "static void denox_create_nodes_{}(dt_graph_t* graph, dt_module_t* module,",
+      basename));
+  src.push_indentation(3);
+  if (!symbolic_ir.vars.empty()) {
     std::string valueParams = "";
     bool first = true;
     for (const auto &var : symbolic_ir.vars) {
@@ -649,28 +646,27 @@ void vkdt_denox::def_func_denox_create_nodes(
     }
     valueParams.append(",");
     src.append(valueParams);
-
-    assert(!compute_graph.input_descriptors.empty());
-    for (const auto &input : compute_graph.input_descriptors) {
-      src.append(fmt::format("int {}_id, const char* {}_connector,", input.name,
-                             input.name));
-    }
-    assert(!compute_graph.output_descriptors.empty());
-    first = true;
-    for (size_t i = 0; i < compute_graph.output_descriptors.size(); ++i) {
-      const auto &output = compute_graph.output_descriptors[i];
-
-      if (i == compute_graph.output_descriptors.size() - 1) {
-        src.append(fmt::format("int {}_id, const char* {}_connector) {{",
-                               output.name, output.name));
-      } else {
-        src.append(fmt::format("int {}_id, const char* {}_connector,",
-                               output.name, output.name));
-      }
-    }
-
-    src.pop_indentation(3);
   }
+
+  assert(!compute_graph.input_descriptors.empty());
+  for (const auto &input : compute_graph.input_descriptors) {
+    src.append(fmt::format("int {}_id, const char* {}_connector,", input.name,
+                           input.name));
+  }
+  assert(!compute_graph.output_descriptors.empty());
+  for (size_t i = 0; i < compute_graph.output_descriptors.size(); ++i) {
+    const auto &output = compute_graph.output_descriptors[i];
+
+    if (i == compute_graph.output_descriptors.size() - 1) {
+      src.append(fmt::format("int {}_id, const char* {}_connector) {{",
+                             output.name, output.name));
+    } else {
+      src.append(fmt::format("int {}_id, const char* {}_connector,",
+                             output.name, output.name));
+    }
+  }
+
+  src.pop_indentation(3);
 
   src.push_indentation();
 
