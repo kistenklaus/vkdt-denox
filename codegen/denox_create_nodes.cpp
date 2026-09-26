@@ -493,7 +493,7 @@ static void create_graph(SourceWriter &src, const SymbolicIR &symbolic_ir,
             if(offset)
               offset_src.append(fmt::format(
                     "graph->node[{}_id].connector[{}].ssbo_offset = {};",
-                    node_namespace, i, sinksource.buffer_ssbo_offset));
+                    node_namespace, i, offset));
           } else {
             if (sinksource.buffer_ssbo_offset == 0) {
               offset_src.append(fmt::format(
