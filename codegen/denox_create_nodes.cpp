@@ -636,24 +636,11 @@ void vkdt_denox::def_func_denox_create_nodes(
   src.add_include("stddef.h", IncludeType::System);
   src.add_include("modules/api.h", IncludeType::Local);
 
-<<<<<<< HEAD
   src.append(fmt::format("static void denox_create_nodes_{}(dt_graph_t* graph, "
                          "dt_module_t* module,",
                          basename));
   src.push_indentation(3);
   if (!symbolic_ir.vars.empty()) {
-=======
-  std::string def = fmt::format("static void denox_create_nodes_{}(dt_graph_t* "
-                                "graph, dt_module_t* module",
-                                basename);
-  if (symbolic_ir.vars.empty()) {
-    def.append(") {");
-    src.append(def);
-  } else {
-    def.append(",");
-    src.append(def);
-    src.push_indentation(3);
->>>>>>> 20c3ca7 (set required_subgroup_size)
     std::string valueParams = "";
     bool first = true;
     for (const auto &var : symbolic_ir.vars) {
