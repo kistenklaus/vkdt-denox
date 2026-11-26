@@ -448,6 +448,12 @@ vkdt_denox::ComputeGraph vkdt_denox::reconstruct_compute_graph(
         .size = pc_size,
         .fields = std::move(fields),
     };
+
+    const auto* req = compute_dispatch->requirements();
+    if (req != nullptr && req->fixed_subgroup_size() != 0) {
+      node_compute_dispatch.required_subgroup_size = req->fixed_subgroup_size();
+    }
+
     node.op = std::move(node_compute_dispatch);
     graph.nodes.push_back(std::move(node));
   }

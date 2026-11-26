@@ -249,7 +249,7 @@ static void create_graph(SourceWriter &src, const SymbolicIR &symbolic_ir,
                          const denox::dnx::Model *dnx,
                          std::vector<bool> &referenced_symbols,
                          std::string_view module_name) {
-  SourceWriter offset_src;
+  SourceWriter modifier_src;
 
   const uint32_t n = compute_graph.nodes.size();
   std::vector<std::string> namespaces(n);
@@ -490,19 +490,20 @@ static void create_graph(SourceWriter &src, const SymbolicIR &symbolic_ir,
                     static_cast<const denox::dnx::ScalarLiteral *>(
                         sinksource.tensor_offset->ptr)) +
                 sinksource.buffer_ssbo_offset;
-            if(offset)
-              offset_src.append(fmt::format(
-                    "graph->node[{}_id].connector[{}].ssbo_offset = {};",
-                    node_namespace, i, offset));
+            if (offset) {
+              modifier_src.append(fmt::format(
+                  "graph->node[{}_id].connector[{}].ssbo_offset = {};",
+                  node_namespace, i, sinksource.buffer_ssbo_offset));
+            }
           } else {
             if (sinksource.buffer_ssbo_offset == 0) {
-              offset_src.append(fmt::format(
+              modifier_src.append(fmt::format(
                   "graph->node[{}_id].connector[{}].ssbo_offset = {};",
                   node_namespace, i,
                   access_symbol(symbolic_ir, *sinksource.tensor_offset,
                                 referenced_symbols)));
             } else {
-              offset_src.append(fmt::format(
+              modifier_src.append(fmt::format(
                   "graph->node[{}_id].connector[{}].ssbo_offset = {} + {};",
                   node_namespace, i,
                   access_symbol(symbolic_ir, *sinksource.tensor_offset,
@@ -512,10 +513,16 @@ static void create_graph(SourceWriter &src, const SymbolicIR &symbolic_ir,
           }
         } else {
           if (sinksource.buffer_ssbo_offset != 0) {
-            offset_src.append(fmt::format(
+            modifier_src.append(fmt::format(
                 "graph->node[{}_id].connector[{}].ssbo_offset = {};",
                 node_namespace, i, sinksource.buffer_ssbo_offset));
           }
+        }
+
+        if (compute_dispatch.required_subgroup_size.has_value()) {
+          modifier_src.append(fmt::format(
+              "graph->node[{}_id].required_subgroup_size = {}", node_namespace,
+              compute_dispatch.required_subgroup_size.value()));
         }
       }
     } else if (std::holds_alternative<Upload>(node.op)) {
@@ -613,7 +620,7 @@ static void create_graph(SourceWriter &src, const SymbolicIR &symbolic_ir,
               .name));
     }
   }
-  src.append(offset_src.finish());
+  src.append(modifier_src.finish());
 }
 
 } // namespace vkdt_denox
@@ -622,19 +629,31 @@ void vkdt_denox::def_func_denox_create_nodes(
     SourceWriter &src, const denox::dnx::Model *dnx,
     const SymbolicIR &symbolic_ir, const ShaderRegistry &shader_registery,
     const CompressedWeights &compresed_weights,
-    const ComputeGraph &compute_graph,
-    const std::string_view module_name,
+    const ComputeGraph &compute_graph, const std::string_view module_name,
     const std::string &basename) {
   src.add_include("stdint.h", IncludeType::System);
   src.add_include("string.h", IncludeType::System);
   src.add_include("stddef.h", IncludeType::System);
   src.add_include("modules/api.h", IncludeType::Local);
 
-  src.append(fmt::format(
-      "static void denox_create_nodes_{}(dt_graph_t* graph, dt_module_t* module,",
-      basename));
+<<<<<<< HEAD
+  src.append(fmt::format("static void denox_create_nodes_{}(dt_graph_t* graph, "
+                         "dt_module_t* module,",
+                         basename));
   src.push_indentation(3);
   if (!symbolic_ir.vars.empty()) {
+=======
+  std::string def = fmt::format("static void denox_create_nodes_{}(dt_graph_t* "
+                                "graph, dt_module_t* module",
+                                basename);
+  if (symbolic_ir.vars.empty()) {
+    def.append(") {");
+    src.append(def);
+  } else {
+    def.append(",");
+    src.append(def);
+    src.push_indentation(3);
+>>>>>>> 20c3ca7 (set required_subgroup_size)
     std::string valueParams = "";
     bool first = true;
     for (const auto &var : symbolic_ir.vars) {

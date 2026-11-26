@@ -67,6 +67,7 @@ struct ComputeDispatch {
   Symbol workgroup_count_y;
   Symbol workgroup_count_z;
   PushConstants pc;
+  std::optional<uint32_t> required_subgroup_size;
   const denox::dnx::DispatchInfo* info;
 };
 
