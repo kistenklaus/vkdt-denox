@@ -521,7 +521,7 @@ static void create_graph(SourceWriter &src, const SymbolicIR &symbolic_ir,
       }
       if (compute_dispatch.required_subgroup_size.has_value()) {
         modifier_src.append(fmt::format(
-            "graph->node[{}_id].required_subgroup_size = {}", node_namespace,
+            "graph->node[{}_id].required_subgroup_size = {};", node_namespace,
             compute_dispatch.required_subgroup_size.value()));
       }
     } else if (std::holds_alternative<Upload>(node.op)) {
